@@ -21,11 +21,17 @@ function mergeAuthor(existing: Author | undefined, incoming: Author): Author {
     nickname: incoming.nickname || existing.nickname,
     profile_url: incoming.profile_url || existing.profile_url,
     tags: dedupeTags([...existing.tags, ...incoming.tags]),
+    note: existing.note ?? incoming.note,
+    profile_summary: existing.profile_summary ?? incoming.profile_summary,
   };
 }
 
 function normalizeTagName(name: string): string {
   return name.replace(/\s+/g, ' ').trim();
+}
+
+function addTagsWithLimit(existingTags: string[], incomingTags: string[]): string[] {
+  return dedupeTags([...existingTags, ...incomingTags]);
 }
 
 export const storage = {
@@ -98,6 +104,38 @@ export const storage = {
     return newTag;
   },
 
+  async ensureTags(tagNames: string[]): Promise<Tag[]> {
+    const normalizedNames = [...new Set(tagNames.map(normalizeTagName).filter(Boolean))];
+    const tags = await this.getTags();
+    const existingNameSet = new Set(tags.map((tag) => tag.name));
+    const nextTags = [...tags];
+    const createdTags: Tag[] = [];
+
+    for (const name of normalizedNames) {
+      if (existingNameSet.has(name)) {
+        continue;
+      }
+
+      if (nextTags.length >= MAX_TAGS) {
+        break;
+      }
+
+      const newTag: Tag = {
+        id: crypto.randomUUID(),
+        name,
+      };
+      nextTags.push(newTag);
+      createdTags.push(newTag);
+      existingNameSet.add(name);
+    }
+
+    if (createdTags.length > 0) {
+      await chrome.storage.local.set({ [STORAGE_KEYS.TAGS]: nextTags });
+    }
+
+    return nextTags;
+  },
+
   async deleteTag(tagId: string): Promise<void> {
     const tags = await this.getTags();
     const tagToDelete = tags.find((tag) => tag.id === tagId);
@@ -140,6 +178,67 @@ export const storage = {
       return {
         ...author,
         tags: [...author.tags, tagName],
+      };
+    });
+
+    await chrome.storage.local.set({ [STORAGE_KEYS.AUTHORS]: nextAuthors });
+    return nextAuthors;
+  },
+
+  async applyAuthorTags(userId: string, tagNames: string[]): Promise<Author[]> {
+    const normalizedIncoming = dedupeTags(tagNames);
+    await this.ensureTags(normalizedIncoming);
+    const authors = await this.getAuthors();
+    const nextAuthors = authors.map((author) => {
+      if (author.user_id !== userId) {
+        return author;
+      }
+
+      return {
+        ...author,
+        tags: addTagsWithLimit(author.tags, normalizedIncoming),
+      };
+    });
+
+    await chrome.storage.local.set({ [STORAGE_KEYS.AUTHORS]: nextAuthors });
+    return nextAuthors;
+  },
+
+  async updateAuthorNote(userId: string, note: string): Promise<Author[]> {
+    const normalizedNote = note.trim();
+    const authors = await this.getAuthors();
+    const nextAuthors = authors.map((author) =>
+      author.user_id === userId
+        ? {
+            ...author,
+            note: normalizedNote,
+          }
+        : author,
+    );
+
+    await chrome.storage.local.set({ [STORAGE_KEYS.AUTHORS]: nextAuthors });
+    return nextAuthors;
+  },
+
+  async updateAuthorProfiles(
+    updates: Array<{
+      user_id: string;
+      nickname?: string;
+      profile_summary?: string;
+    }>,
+  ): Promise<Author[]> {
+    const updateMap = new Map(updates.map((item) => [item.user_id, item]));
+    const authors = await this.getAuthors();
+    const nextAuthors = authors.map((author) => {
+      const update = updateMap.get(author.user_id);
+      if (!update) {
+        return author;
+      }
+
+      return {
+        ...author,
+        nickname: update.nickname || author.nickname,
+        profile_summary: update.profile_summary || author.profile_summary,
       };
     });
 

@@ -3,6 +3,8 @@ export interface Author {
   nickname: string;
   profile_url: string;
   tags: string[];
+  note?: string;
+  profile_summary?: string;
 }
 
 export interface Tag {

@@ -15,6 +15,53 @@ type ScanProgressMessage = {
   usedScrollableContainer: boolean;
 };
 
+const TAG_RECOMMENDATION_KEYWORDS: Record<string, string[]> = {
+  美食: ['美食', '探店', '吃货', '餐厅', '料理', '烘焙', '咖啡', '甜品', '火锅', '小吃'],
+  穿搭: ['穿搭', 'ootd', '搭配', '时尚', '服饰', '女装', '男装', '鞋子', '包包'],
+  旅行: ['旅行', '旅游', '攻略', '出行', '酒店', '机票', '民宿', 'citywalk'],
+  摄影: ['摄影', '拍照', '相机', '修图', '镜头', '人像', '胶片'],
+  健身: ['健身', '减脂', '塑形', '跑步', '瑜伽', '训练', '增肌'],
+  美妆: ['美妆', '护肤', '彩妆', '口红', '香水', '面膜', '粉底'],
+  母婴: ['母婴', '宝宝', '育儿', '孕妈', '早教', '辅食'],
+  家居: ['家居', '收纳', '装修', '软装', '居家', '清洁'],
+  学习: ['学习', '英语', '留学', '读书', '职场', '效率', '考研'],
+  数码: ['数码', '手机', '电脑', 'ipad', '耳机', '测评', '科技'],
+};
+const DEFAULT_RECOMMENDATION_TAGS = Object.keys(TAG_RECOMMENDATION_KEYWORDS);
+
+function cleanNicknameText(rawText: string): string {
+  return rawText
+    .replace(/\s+/g, ' ')
+    .replace(/(?:19|20)\d{2}[-/.年](?:0?[1-9]|1[0-2])[-/.月](?:0?[1-9]|[12]\d|3[01])日?$/g, '')
+    .replace(/(?:19|20)\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])$/g, '')
+    .replace(/(?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\d|3[01])$/g, '')
+    .replace(/\d{1,2}:\d{2}$/g, '')
+    .trim();
+}
+
+function extractProfileInfoFromHtml(html: string): {
+  nickname?: string;
+  profile_summary?: string;
+} {
+  const doc = new DOMParser().parseFromString(html, 'text/html');
+  const title = doc.querySelector('title')?.textContent?.trim() ?? '';
+  const metaDescription =
+    doc.querySelector('meta[name="description"]')?.getAttribute('content')?.trim() ??
+    doc.querySelector('meta[property="og:description"]')?.getAttribute('content')?.trim() ??
+    '';
+
+  const headingText = doc.querySelector('h1, h2')?.textContent?.trim() ?? '';
+  const nickname = cleanNicknameText(
+    [headingText, title.replace(/[-|｜_].*$/g, '').trim()].find(Boolean) ?? '',
+  );
+  const profile_summary = metaDescription.replace(/\s+/g, ' ').trim();
+
+  return {
+    nickname: nickname || undefined,
+    profile_summary: profile_summary || undefined,
+  };
+}
+
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
@@ -45,6 +92,7 @@ async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promi
         nickname: string;
         profile_url: string;
         tags: string[];
+        note?: string;
       };
 
       const isSearchResultPage = () =>
@@ -91,8 +139,9 @@ async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promi
             continue;
           }
           const firstLine = normalized.split('\n')[0]?.trim() ?? '';
-          if (firstLine && !firstLine.startsWith('http')) {
-            return firstLine;
+          const cleaned = cleanNicknameText(firstLine);
+          if (cleaned && !cleaned.startsWith('http')) {
+            return cleaned;
           }
         }
 
@@ -172,6 +221,7 @@ async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promi
             nickname,
             profile_url: profileUrl,
             tags: [],
+            note: '',
           });
         }
 
@@ -441,6 +491,8 @@ export function PopupApp() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeScanSessionId, setActiveScanSessionId] = useState<string | null>(null);
+  const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
   const [tagDraft, setTagDraft] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('authors');
   const [statusText, setStatusText] = useState('打开小红书搜索结果页，并勾选“已关注”筛选后开始扫描。');
@@ -473,21 +525,98 @@ export function PopupApp() {
     };
   }, [activeScanSessionId]);
 
-  const untaggedAuthors = authors.filter((author) => author.tags.length === 0);
+  const filteredAuthors = authors.filter((author) => {
+    const query = searchQuery.trim().toLowerCase();
+    if (!query) {
+      return true;
+    }
+
+    return (
+      author.nickname.toLowerCase().includes(query) ||
+      author.profile_url.toLowerCase().includes(query) ||
+      (author.note ?? '').toLowerCase().includes(query) ||
+      author.tags.some((tag) => tag.toLowerCase().includes(query))
+    );
+  });
+  const untaggedAuthors = filteredAuthors.filter((author) => author.tags.length === 0);
+  const recommendationTagPool = [...new Set([...tags.map((tag) => tag.name), ...DEFAULT_RECOMMENDATION_TAGS])];
+  const normalizedTagMap = new Map(recommendationTagPool.map((tagName) => [tagName.toLowerCase(), tagName]));
   const groupedAuthors = [
     ...(untaggedAuthors.length > 0 ? [{ label: '未分类', authors: untaggedAuthors }] : []),
     ...tags
       .map((tag) => ({
         label: tag.name,
-        authors: authors.filter((author) => author.tags.includes(tag.name)),
+        authors: filteredAuthors.filter((author) => author.tags.includes(tag.name)),
       }))
       .filter((group) => group.authors.length > 0),
   ];
+  const selectedTag = tags.find((tag) => tag.id === selectedTagId) ?? null;
+  const selectedTagAuthors = selectedTag
+    ? authors.filter((author) => author.tags.includes(selectedTag.name))
+    : [];
+
+  function getRecommendedTags(author: Author): string[] {
+    const text = `${author.nickname} ${author.profile_url} ${author.profile_summary ?? ''} ${author.note ?? ''}`.toLowerCase();
+
+    const scoredRecommendations = recommendationTagPool
+      .map((tagName) => {
+        const keywords = new Set<string>([
+          tagName,
+          ...(TAG_RECOMMENDATION_KEYWORDS[tagName] ?? []),
+        ]);
+
+        let score = 0;
+        for (const keyword of keywords) {
+          const normalizedKeyword = keyword.toLowerCase().trim();
+          if (!normalizedKeyword) {
+            continue;
+          }
+
+          if (text.includes(normalizedKeyword)) {
+            score += normalizedKeyword === tagName.toLowerCase() ? 3 : 1;
+          }
+        }
+
+        for (const [normalizedTagName, originalTagName] of normalizedTagMap.entries()) {
+          if (
+            originalTagName !== tagName &&
+            text.includes(normalizedTagName) &&
+            normalizedTagName.includes(tagName.toLowerCase())
+          ) {
+            score += 1;
+          }
+        }
+
+        return {
+          tagName,
+          score,
+        };
+      })
+      .filter((item) => item.score > 0 && !author.tags.includes(item.tagName))
+      .sort((a, b) => b.score - a.score || a.tagName.localeCompare(b.tagName))
+      .slice(0, Math.max(0, 5 - author.tags.length))
+      .map((item) => item.tagName);
+
+    return scoredRecommendations;
+  }
+
+  const authorsWithRecommendations = authors
+    .map((author) => ({
+      author,
+      recommendedTags: getRecommendedTags(author),
+    }))
+    .filter((item) => item.recommendedTags.length > 0);
 
   async function refreshData() {
     const [nextAuthors, nextTags] = await Promise.all([storage.getAuthors(), storage.getTags()]);
     setAuthors(nextAuthors);
     setTags(nextTags);
+    setSelectedTagId((current) => {
+      if (!current) {
+        return nextTags[0]?.id ?? null;
+      }
+      return nextTags.some((tag) => tag.id === current) ? current : (nextTags[0]?.id ?? null);
+    });
   }
 
   async function handleScanClick(mode: ScanMode) {
@@ -534,9 +663,10 @@ export function PopupApp() {
 
   async function handleCreateTag() {
     try {
-      await storage.createTag(tagDraft);
+      const createdTag = await storage.createTag(tagDraft);
       setTagDraft('');
       await refreshData();
+      setSelectedTagId(createdTag.id);
       setStatusTone('success');
       setStatusText('标签已创建，可以开始给已搜集的博主打标。');
     } catch (error) {
@@ -560,6 +690,9 @@ export function PopupApp() {
   async function handleDeleteTag(tagId: string) {
     await storage.deleteTag(tagId);
     await refreshData();
+    if (selectedTagId === tagId) {
+      setSelectedTagId((current) => (current === tagId ? null : current));
+    }
     setStatusTone('success');
     setStatusText('标签已删除，相关博主身上的该标签也已同步移除。');
   }
@@ -578,6 +711,100 @@ export function PopupApp() {
       setStatusTone('error');
       setStatusText(error instanceof Error ? error.message : '更新标签失败。');
     }
+  }
+
+  async function handleApplyRecommendedTags(author: Author, recommendedTags: string[]) {
+    if (recommendedTags.length === 0) {
+      return;
+    }
+
+    const nextAuthors = await storage.applyAuthorTags(author.user_id, recommendedTags);
+    setAuthors(nextAuthors);
+    setStatusTone('success');
+    setStatusText(`已为 ${author.nickname} 应用推荐标签：${recommendedTags.join('、')}。`);
+  }
+
+  async function handleApplyAllRecommendations() {
+    let nextAuthors = authors;
+    let appliedCount = 0;
+
+    for (const { author, recommendedTags } of authorsWithRecommendations) {
+      if (recommendedTags.length === 0) {
+        continue;
+      }
+
+      nextAuthors = await storage.applyAuthorTags(author.user_id, recommendedTags);
+      appliedCount += 1;
+    }
+
+    setAuthors(nextAuthors);
+    setStatusTone('success');
+    setStatusText(
+      appliedCount > 0
+        ? `已为 ${appliedCount} 位博主应用推荐标签。`
+        : '当前没有可应用的推荐标签。',
+    );
+  }
+
+  async function handleEnhanceRecommendations() {
+    const candidates = authors.filter((author) => !author.profile_summary);
+    if (candidates.length === 0) {
+      setStatusTone('success');
+      setStatusText('现有博主资料已经增强完成，可以直接继续看推荐标签。');
+      return;
+    }
+
+    setLoading(true);
+    setStatusTone('idle');
+    setStatusText(`正在增强 ${candidates.length} 位博主的主页摘要，请稍候...`);
+
+    try {
+      const updates: Array<{
+        user_id: string;
+        nickname?: string;
+        profile_summary?: string;
+      }> = [];
+
+      for (let index = 0; index < candidates.length; index += 1) {
+        const author = candidates[index];
+        setStatusText(`正在增强推荐资料：${index + 1}/${candidates.length} ${author.nickname}`);
+
+        try {
+          const response = await fetch(author.profile_url, {
+            credentials: 'include',
+          });
+          const html = await response.text();
+          const profileInfo = extractProfileInfoFromHtml(html);
+
+          if (profileInfo.nickname || profileInfo.profile_summary) {
+            updates.push({
+              user_id: author.user_id,
+              ...profileInfo,
+            });
+          }
+        } catch {
+          // Ignore individual fetch failures to keep batch enhancement moving.
+        }
+      }
+
+      if (updates.length === 0) {
+        setStatusTone('error');
+        setStatusText('没有成功抓到可用的主页摘要，可能是当前登录态或页面权限限制。');
+        return;
+      }
+
+      const nextAuthors = await storage.updateAuthorProfiles(updates);
+      setAuthors(nextAuthors);
+      setStatusTone('success');
+      setStatusText(`已增强 ${updates.length} 位博主的主页摘要，推荐标签覆盖率会更高。`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleNoteBlur(author: Author, note: string) {
+    const nextAuthors = await storage.updateAuthorNote(author.user_id, note);
+    setAuthors(nextAuthors);
   }
 
   return (
@@ -647,26 +874,63 @@ export function PopupApp() {
         </div>
 
         <div className="mt-2 flex justify-end">
-          <button
-            type="button"
-            onClick={handleClearAuthors}
-            disabled={loading || authors.length === 0}
-            className="rounded-full bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-          >
-            清空入库博主
-          </button>
+          <div className="flex gap-2">
+            <button
+              type="button"
+              onClick={handleEnhanceRecommendations}
+              disabled={loading || authors.length === 0}
+              className="rounded-full bg-sky-50 px-3 py-1.5 text-xs font-medium text-sky-700 transition hover:bg-sky-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+            >
+              增强推荐
+            </button>
+            <button
+              type="button"
+              onClick={handleApplyAllRecommendations}
+              disabled={loading || authorsWithRecommendations.length === 0}
+              className="rounded-full bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 transition hover:bg-emerald-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+            >
+              应用全部推荐
+            </button>
+            <button
+              type="button"
+              onClick={handleClearAuthors}
+              disabled={loading || authors.length === 0}
+              className="rounded-full bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+            >
+              清空入库博主
+            </button>
+          </div>
         </div>
 
         {viewMode === 'authors' ? (
           <section className="mt-4">
             <div className="mb-2 flex items-center justify-between">
               <h2 className="text-sm font-semibold text-slate-900">已搜集博主</h2>
-              <span className="text-xs text-slate-500">按标签分组展示</span>
+              <span className="text-xs text-slate-500">
+                {authorsWithRecommendations.length} 位有推荐标签
+              </span>
             </div>
+
+            <input
+              value={searchQuery}
+              onChange={(event) => setSearchQuery(event.target.value)}
+              placeholder="搜索昵称、主页链接、标签或备注"
+              className="mb-3 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-red-300"
+            />
+
+            {tags.length === 0 ? (
+              <div className="mb-3 rounded-2xl bg-amber-50 px-4 py-3 text-xs leading-5 text-amber-800">
+                当前还没有你手动创建的标签，但插件会先使用内置分类给出推荐；接受推荐时会自动补充对应标签。
+              </div>
+            ) : null}
 
             {authors.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
                 还没有数据。先去搜索结果页勾选“已关注”，再点击上方按钮扫描当前页。
+              </div>
+            ) : groupedAuthors.length === 0 ? (
+              <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
+                没有匹配到相关博主，试试别的关键词。
               </div>
             ) : (
               <div className="max-h-[360px] space-y-4 overflow-y-auto pr-1">
@@ -705,8 +969,8 @@ export function PopupApp() {
                           </div>
 
                           <div className="mt-3 flex flex-wrap gap-2">
-                            {tags.length === 0 ? (
-                              <span className="text-xs text-slate-400">先创建标签后再打标</span>
+                            {recommendationTagPool.length === 0 ? (
+                              <span className="text-xs text-slate-400">暂无可用标签</span>
                             ) : (
                               tags.map((tag) => {
                                 const active = author.tags.includes(tag.name);
@@ -728,6 +992,36 @@ export function PopupApp() {
                               })
                             )}
                           </div>
+
+                          <div className="mt-3">
+                            <textarea
+                              defaultValue={author.note ?? ''}
+                              onBlur={(event) => handleNoteBlur(author, event.target.value)}
+                              rows={2}
+                              placeholder="添加备注，例如：探店风格稳定，后续归到美食精选"
+                              className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-xs text-slate-700 outline-none transition focus:border-red-300"
+                            />
+                          </div>
+
+                          {getRecommendedTags(author).length > 0 ? (
+                            <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-2">
+                              <div className="flex items-center justify-between gap-3">
+                                <div className="min-w-0">
+                                  <p className="text-xs font-semibold text-amber-800">推荐标签</p>
+                                  <p className="mt-1 text-xs text-amber-700">
+                                    {getRecommendedTags(author).join('、')}
+                                  </p>
+                                </div>
+                                <button
+                                  type="button"
+                                  onClick={() => handleApplyRecommendedTags(author, getRecommendedTags(author))}
+                                  className="shrink-0 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-200"
+                                >
+                                  接受推荐
+                                </button>
+                              </div>
+                            </div>
+                          ) : null}
                         </li>
                       ))}
                     </ul>
@@ -741,7 +1035,7 @@ export function PopupApp() {
             <div className="mb-3">
               <h2 className="text-sm font-semibold text-slate-900">标签管理</h2>
               <p className="mt-1 text-xs leading-5 text-slate-500">
-                标签上限 20 个，删除标签会同步清除博主身上的对应标记。
+                标签上限 20 个，删除标签会同步清除博主身上的对应标记。点击标签卡片可查看该标签下的博主。
               </p>
             </div>
 
@@ -765,7 +1059,7 @@ export function PopupApp() {
             <div className="mt-4 max-h-[360px] space-y-2 overflow-y-auto pr-1">
               {tags.length === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
-                  还没有标签，先创建几个分组吧。
+                  还没有手动创建的标签。你可以直接新建，也可以先去博主列表接受系统推荐标签。
                 </div>
               ) : (
                 tags.map((tag) => {
@@ -773,12 +1067,21 @@ export function PopupApp() {
                   return (
                     <div
                       key={tag.id}
-                      className="flex items-center justify-between rounded-2xl border border-slate-200 px-3 py-3"
+                      className={[
+                        'flex items-center justify-between rounded-2xl border px-3 py-3 transition',
+                        selectedTagId === tag.id
+                          ? 'border-red-200 bg-red-50'
+                          : 'border-slate-200 bg-white hover:border-slate-300',
+                      ].join(' ')}
                     >
-                      <div>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedTagId(tag.id)}
+                        className="min-w-0 flex-1 text-left"
+                      >
                         <p className="text-sm font-medium text-slate-900">{tag.name}</p>
                         <p className="mt-1 text-xs text-slate-500">{taggedCount} 位博主已打标</p>
-                      </div>
+                      </button>
                       <button
                         type="button"
                         onClick={() => handleDeleteTag(tag.id)}
@@ -789,6 +1092,88 @@ export function PopupApp() {
                     </div>
                   );
                 })
+              )}
+            </div>
+
+            <div className="mt-5">
+              <div className="mb-2 flex items-center justify-between">
+                <h3 className="text-sm font-semibold text-slate-900">
+                  {selectedTag ? `「${selectedTag.name}」下的博主` : '选择一个标签查看博主'}
+                </h3>
+                <span className="text-xs text-slate-500">
+                  {selectedTag ? `${selectedTagAuthors.length} 位` : ''}
+                </span>
+              </div>
+
+              {!selectedTag ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
+                  点击上方任一标签卡片，即可查看该标签下的博主。
+                </div>
+              ) : selectedTagAuthors.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
+                  这个标签下还没有博主。
+                </div>
+              ) : (
+                <div className="max-h-[240px] space-y-2 overflow-y-auto pr-1">
+                  {selectedTagAuthors.map((author) => {
+                    const recommendedTags = getRecommendedTags(author);
+                    return (
+                      <div
+                        key={author.user_id}
+                        className="rounded-2xl border border-slate-200 px-3 py-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0 flex-1">
+                            <p className="truncate text-sm font-medium text-slate-900">
+                              {author.nickname}
+                            </p>
+                            <a
+                              href={author.profile_url}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="mt-1 block truncate text-xs text-slate-500 hover:text-brand"
+                            >
+                              {author.profile_url}
+                            </a>
+                          </div>
+                          <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-600">
+                            {author.tags.length}/5 标签
+                          </span>
+                        </div>
+
+                        {recommendedTags.length > 0 ? (
+                          <div className="mt-3 rounded-2xl bg-amber-50 px-3 py-2">
+                            <div className="flex items-center justify-between gap-3">
+                              <div className="min-w-0">
+                                <p className="text-xs font-semibold text-amber-800">推荐标签</p>
+                                <p className="mt-1 text-xs text-amber-700">
+                                  {recommendedTags.join('、')}
+                                </p>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleApplyRecommendedTags(author, recommendedTags)}
+                                className="shrink-0 rounded-full bg-amber-100 px-3 py-1 text-xs font-medium text-amber-800 transition hover:bg-amber-200"
+                              >
+                                接受推荐
+                              </button>
+                            </div>
+                          </div>
+                        ) : null}
+
+                        <div className="mt-3">
+                          <textarea
+                            defaultValue={author.note ?? ''}
+                            onBlur={(event) => handleNoteBlur(author, event.target.value)}
+                            rows={2}
+                            placeholder="添加备注，例如：这位主要做旅行攻略合集"
+                            className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-xs text-slate-700 outline-none transition focus:border-red-300"
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
               )}
             </div>
           </section>

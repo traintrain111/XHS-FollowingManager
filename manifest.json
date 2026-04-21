@@ -30,5 +30,16 @@
       ],
       "run_at": "document_idle"
     }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "src/popup/index.html",
+        "assets/*"
+      ],
+      "matches": [
+        "https://www.xiaohongshu.com/*"
+      ]
+    }
   ]
 }
