@@ -12,7 +12,14 @@ async function getActiveTab() {
   return tab;
 }
 
-async function scanAuthorsInActivePage(mode: ScanMode): Promise<Author[]> {
+async function scanAuthorsInActivePage(mode: ScanMode): Promise<{
+  authors: Author[];
+  diagnostics?: {
+    rounds: number;
+    detectedProfiles: number;
+    usedScrollableContainer: boolean;
+  };
+}> {
   const tab = await getActiveTab();
   if (!tab.id) {
     throw new Error('未找到当前标签页。');
@@ -89,34 +96,182 @@ async function scanAuthorsInActivePage(mode: ScanMode): Promise<Author[]> {
           window.setTimeout(resolve, ms);
         });
 
-      const autoScrollToLoadMore = async () => {
-        const scrollStep = Math.max(window.innerHeight * 0.9, 900);
-        const settleDelay = 1200;
-        const maxRounds = 30;
-        let previousHeight = 0;
-        let stableRounds = 0;
+      const getProfileAnchors = () =>
+        Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/user/profile/"]'));
 
-        for (let round = 0; round < maxRounds; round += 1) {
-          window.scrollBy({ top: scrollStep, behavior: 'smooth' });
-          await delay(settleDelay);
+      const getUniqueProfileCount = () => {
+        const ids = new Set<string>();
+        for (const anchor of getProfileAnchors()) {
+          const profileUrl = normalizeProfileUrl(anchor.href);
+          if (!profileUrl) {
+            continue;
+          }
+          const userId = extractUserId(profileUrl);
+          if (userId) {
+            ids.add(userId);
+          }
+        }
+        return ids.size;
+      };
 
-          const currentHeight = Math.max(
-            document.body.scrollHeight,
-            document.documentElement.scrollHeight,
+      const isScrollable = (element: HTMLElement) => {
+        const style = window.getComputedStyle(element);
+        const overflowY = style.overflowY;
+        return (
+          (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') &&
+          element.scrollHeight - element.clientHeight > 240
+        );
+      };
+
+      const getScrollableAncestors = (element: HTMLElement): HTMLElement[] => {
+        const ancestors: HTMLElement[] = [];
+        let current = element.parentElement;
+        while (current && current !== document.body) {
+          if (isScrollable(current)) {
+            ancestors.push(current);
+          }
+          current = current.parentElement;
+        }
+        return ancestors;
+      };
+
+      const getResultRoot = (): HTMLElement | null => {
+        const anchors = getProfileAnchors();
+        if (anchors.length === 0) {
+          return null;
+        }
+
+        const scored = new Map<HTMLElement, number>();
+        for (const anchor of anchors.slice(0, 40)) {
+          let current = anchor.closest<HTMLElement>(
+            'section, article, [class*="note"], [class*="user"], [class*="card"]',
           );
-
-          if (currentHeight <= previousHeight) {
-            stableRounds += 1;
-            if (stableRounds >= 3) {
-              break;
+          while (current && current !== document.body) {
+            const count = current.querySelectorAll('a[href*="/user/profile/"]').length;
+            if (count >= 3) {
+              scored.set(current, Math.max(scored.get(current) ?? 0, count));
             }
-          } else {
-            previousHeight = currentHeight;
-            stableRounds = 0;
+            current = current.parentElement;
           }
         }
 
-        window.scrollTo({ top: 0, behavior: 'auto' });
+        const candidates = Array.from(scored.entries())
+          .sort((a, b) => b[1] - a[1])
+          .map(([element]) => element);
+
+        return candidates[0] ?? null;
+      };
+
+      const getBestScrollTarget = (): HTMLElement | null => {
+        const resultRoot = getResultRoot();
+        if (resultRoot) {
+          const rootAncestors = getScrollableAncestors(resultRoot);
+          if (rootAncestors.length > 0) {
+            return rootAncestors[0];
+          }
+        }
+
+        const anchors = getProfileAnchors();
+        const scored = new Map<HTMLElement, number>();
+        for (const anchor of anchors.slice(0, 30)) {
+          for (const ancestor of getScrollableAncestors(anchor)) {
+            scored.set(ancestor, (scored.get(ancestor) ?? 0) + 1);
+          }
+        }
+
+        const candidates = Array.from(scored.entries())
+          .sort((a, b) => b[1] - a[1] || b[0].clientHeight - a[0].clientHeight)
+          .map(([element]) => element);
+
+        return candidates[0] ?? null;
+      };
+
+      const scrollLastAnchorIntoView = (target: HTMLElement | null) => {
+        const anchors = getProfileAnchors();
+        const lastAnchor = anchors[anchors.length - 1];
+        if (!lastAnchor) {
+          return;
+        }
+
+        if (!target) {
+          lastAnchor.scrollIntoView({ block: 'end', behavior: 'auto' });
+          return;
+        }
+
+        const targetRect = target.getBoundingClientRect();
+        const anchorRect = lastAnchor.getBoundingClientRect();
+        const delta = anchorRect.bottom - targetRect.bottom + Math.min(target.clientHeight * 0.4, 320);
+        if (delta > 0) {
+          target.scrollTop += delta;
+        } else {
+          lastAnchor.scrollIntoView({ block: 'end', behavior: 'auto' });
+        }
+      };
+
+      const autoScrollToLoadMore = async () => {
+        const settleDelay = 1800;
+        const maxRounds = 120;
+        const target = getBestScrollTarget();
+        const useWindow = !target;
+        let stableRounds = 0;
+        let rounds = 0;
+        let previousUniqueProfiles = getUniqueProfileCount();
+        let previousScrollTop = useWindow ? window.scrollY : (target?.scrollTop ?? 0);
+
+        for (rounds = 1; rounds <= maxRounds; rounds += 1) {
+          const viewportHeight = useWindow
+            ? window.innerHeight
+            : (target?.clientHeight ?? window.innerHeight);
+          const scrollStep = Math.max(viewportHeight * 1.15, 1200);
+
+          if (useWindow) {
+            window.scrollBy({ top: scrollStep, behavior: 'auto' });
+          } else if (target) {
+            target.scrollTop += scrollStep;
+          }
+
+          scrollLastAnchorIntoView(target ?? null);
+          await delay(settleDelay);
+          await delay(500);
+
+          const currentUniqueProfiles = getUniqueProfileCount();
+          const currentScrollTop = useWindow ? window.scrollY : (target?.scrollTop ?? 0);
+          const scrollHeight = useWindow
+            ? Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)
+            : (target?.scrollHeight ?? 0);
+          const clientHeight = useWindow
+            ? window.innerHeight
+            : (target?.clientHeight ?? 0);
+          const remaining = scrollHeight - (currentScrollTop + clientHeight);
+          const nearBottom = remaining <= Math.max(clientHeight * 0.2, 48);
+          const noNewProfiles = currentUniqueProfiles <= previousUniqueProfiles;
+          const noFurtherScroll = currentScrollTop <= previousScrollTop;
+
+          if ((nearBottom && noNewProfiles) || (noNewProfiles && noFurtherScroll)) {
+            stableRounds += 1;
+          } else {
+            stableRounds = 0;
+          }
+
+          previousUniqueProfiles = Math.max(previousUniqueProfiles, currentUniqueProfiles);
+          previousScrollTop = Math.max(previousScrollTop, currentScrollTop);
+
+          if (stableRounds >= 6) {
+            break;
+          }
+        }
+
+        if (useWindow) {
+          window.scrollTo({ top: 0, behavior: 'auto' });
+        } else if (target) {
+          target.scrollTop = 0;
+        }
+
+        return {
+          rounds: Math.min(rounds, maxRounds),
+          detectedProfiles: getUniqueProfileCount(),
+          usedScrollableContainer: Boolean(target),
+        };
       };
 
       if (window.location.host !== expectedHost) {
@@ -146,9 +301,14 @@ async function scanAuthorsInActivePage(mode: ScanMode): Promise<Author[]> {
         };
       }
 
-      if (scanMode === 'auto') {
-        await autoScrollToLoadMore();
-      }
+      const diagnostics =
+        scanMode === 'auto'
+          ? await autoScrollToLoadMore()
+          : {
+              rounds: 0,
+              detectedProfiles: getUniqueProfileCount(),
+              usedScrollableContainer: Boolean(getBestScrollTarget()),
+            };
 
       const anchors = Array.from(
         document.querySelectorAll<HTMLAnchorElement>('a[href*="/user/profile/"]'),
@@ -183,6 +343,7 @@ async function scanAuthorsInActivePage(mode: ScanMode): Promise<Author[]> {
         success: true,
         message: '',
         authors: Array.from(authorMap.values()),
+        diagnostics,
       };
     },
     args: [XHS_HOST, mode],
@@ -197,7 +358,10 @@ async function scanAuthorsInActivePage(mode: ScanMode): Promise<Author[]> {
     throw new Error(payload.message);
   }
 
-  return payload.authors;
+  return {
+    authors: payload.authors,
+    diagnostics: payload.diagnostics,
+  };
 }
 
 export function PopupApp() {
@@ -240,7 +404,7 @@ export function PopupApp() {
     );
 
     try {
-      const scannedAuthors = await scanAuthorsInActivePage(mode);
+      const { authors: scannedAuthors, diagnostics } = await scanAuthorsInActivePage(mode);
       if (scannedAuthors.length === 0) {
         throw new Error('当前页面还没有可识别的博主卡片，请先滚动搜索结果页加载更多内容。');
       }
@@ -252,7 +416,11 @@ export function PopupApp() {
         response.added > 0
           ? `${
               mode === 'auto' ? '自动搜集完成' : '扫描完成'
-            }，新增 ${response.added} 位已关注博主。当前本地库已自动合并重复数据。`
+            }，新增 ${response.added} 位已关注博主。${
+              mode === 'auto' && diagnostics
+                ? `本轮滚动 ${diagnostics.rounds} 次，识别到 ${diagnostics.detectedProfiles} 位候选博主。`
+                : '当前本地库已自动合并重复数据。'
+            }`
           : mode === 'auto'
             ? '自动搜集完成，但没有发现新的已关注博主。'
             : '扫描完成，本页没有发现新的已关注博主。',
