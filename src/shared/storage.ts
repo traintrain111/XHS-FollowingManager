@@ -34,6 +34,10 @@ export const storage = {
     return result[STORAGE_KEYS.AUTHORS] ?? [];
   },
 
+  async clearAuthors(): Promise<void> {
+    await chrome.storage.local.set({ [STORAGE_KEYS.AUTHORS]: [] });
+  },
+
   async upsertAuthors(incomingAuthors: Author[]): Promise<{
     authors: Author[];
     added: number;

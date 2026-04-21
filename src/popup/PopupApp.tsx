@@ -6,13 +6,21 @@ import type { Author, Tag } from '../shared/types';
 type StatusTone = 'idle' | 'success' | 'error';
 type ViewMode = 'authors' | 'tags';
 type ScanMode = 'page' | 'auto';
+type ScanProgressMessage = {
+  type: 'SCAN_PROGRESS';
+  sessionId: string;
+  mode: ScanMode;
+  round: number;
+  detectedProfiles: number;
+  usedScrollableContainer: boolean;
+};
 
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
 }
 
-async function scanAuthorsInActivePage(mode: ScanMode): Promise<{
+async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promise<{
   authors: Author[];
   diagnostics?: {
     rounds: number;
@@ -31,7 +39,7 @@ async function scanAuthorsInActivePage(mode: ScanMode): Promise<{
 
   const results = await chrome.scripting.executeScript({
     target: { tabId: tab.id },
-    func: async (expectedHost: string, scanMode: ScanMode) => {
+    func: async (expectedHost: string, scanMode: ScanMode, nextSessionId: string) => {
       type PageAuthor = {
         user_id: string;
         nickname: string;
@@ -91,13 +99,98 @@ async function scanAuthorsInActivePage(mode: ScanMode): Promise<{
         return '';
       };
 
+      const shouldSkipAuthor = (nickname: string, anchor: HTMLAnchorElement): boolean => {
+        const normalized = nickname.replace(/\s+/g, '').trim();
+        if (normalized === '我' || normalized === '自己' || normalized === '我的主页') {
+          return true;
+        }
+
+        const explicitLabels = [
+          anchor.getAttribute('title'),
+          anchor.getAttribute('aria-label'),
+          anchor.textContent,
+        ]
+          .filter(Boolean)
+          .map((value) => value!.replace(/\s+/g, '').trim());
+
+        return explicitLabels.includes('我');
+      };
+
       const delay = (ms: number) =>
         new Promise<void>((resolve) => {
           window.setTimeout(resolve, ms);
         });
 
+      const reportProgress = (round: number, detectedProfiles: number, usedScrollableContainer: boolean) => {
+        try {
+          chrome.runtime.sendMessage(
+            {
+              type: 'SCAN_PROGRESS',
+              sessionId: nextSessionId,
+              mode: scanMode,
+              round,
+              detectedProfiles,
+              usedScrollableContainer,
+            },
+            () => {
+              void chrome.runtime.lastError;
+            },
+          );
+        } catch {
+          // ignore progress reporting errors
+        }
+      };
+
       const getProfileAnchors = () =>
         Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/user/profile/"]'));
+
+      const collectAuthorsFromVisibleDom = (): PageAuthor[] => {
+        const authorMap = new Map<string, PageAuthor>();
+
+        for (const anchor of getProfileAnchors()) {
+          const profileUrl = normalizeProfileUrl(anchor.href);
+          if (!profileUrl) {
+            continue;
+          }
+
+          const userId = extractUserId(profileUrl);
+          if (!userId) {
+            continue;
+          }
+
+          const nickname = extractNickname(anchor);
+          if (!nickname) {
+            continue;
+          }
+
+          if (shouldSkipAuthor(nickname, anchor)) {
+            continue;
+          }
+
+          authorMap.set(userId, {
+            user_id: userId,
+            nickname,
+            profile_url: profileUrl,
+            tags: [],
+          });
+        }
+
+        return Array.from(authorMap.values());
+      };
+
+      const mergeCollectedAuthors = (
+        targetMap: Map<string, PageAuthor>,
+        authors: PageAuthor[],
+      ) => {
+        for (const author of authors) {
+          const existing = targetMap.get(author.user_id);
+          targetMap.set(author.user_id, {
+            ...existing,
+            ...author,
+            tags: existing?.tags ?? author.tags,
+          });
+        }
+      };
 
       const getUniqueProfileCount = () => {
         const ids = new Set<string>();
@@ -210,67 +303,74 @@ async function scanAuthorsInActivePage(mode: ScanMode): Promise<{
 
       const autoScrollToLoadMore = async () => {
         const settleDelay = 1800;
-        const maxRounds = 120;
+        const maxRounds = 160;
         const target = getBestScrollTarget();
-        const useWindow = !target;
+        const collectedAuthors = new Map<string, PageAuthor>();
         let stableRounds = 0;
         let rounds = 0;
-        let previousUniqueProfiles = getUniqueProfileCount();
-        let previousScrollTop = useWindow ? window.scrollY : (target?.scrollTop ?? 0);
+        let previousCollectedCount = 0;
+        let previousWindowScrollY = window.scrollY;
+        let previousTargetScrollTop = target?.scrollTop ?? 0;
+
+        const getDocumentHeight = () =>
+          Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+
+        mergeCollectedAuthors(collectedAuthors, collectAuthorsFromVisibleDom());
+        previousCollectedCount = collectedAuthors.size;
+        reportProgress(0, collectedAuthors.size, Boolean(target));
 
         for (rounds = 1; rounds <= maxRounds; rounds += 1) {
-          const viewportHeight = useWindow
-            ? window.innerHeight
-            : (target?.clientHeight ?? window.innerHeight);
-          const scrollStep = Math.max(viewportHeight * 1.15, 1200);
+          const containerStep = Math.max((target?.clientHeight ?? window.innerHeight) * 1.05, 900);
+          const windowStep = Math.max(window.innerHeight * 1.05, 900);
 
-          if (useWindow) {
-            window.scrollBy({ top: scrollStep, behavior: 'auto' });
-          } else if (target) {
-            target.scrollTop += scrollStep;
+          if (target) {
+            target.scrollTop += containerStep;
           }
 
-          scrollLastAnchorIntoView(target ?? null);
+          window.scrollBy({ top: windowStep, behavior: 'auto' });
+          scrollLastAnchorIntoView(target);
           await delay(settleDelay);
-          await delay(500);
+          scrollLastAnchorIntoView(target);
+          await delay(700);
+          mergeCollectedAuthors(collectedAuthors, collectAuthorsFromVisibleDom());
+          reportProgress(rounds, collectedAuthors.size, Boolean(target));
 
-          const currentUniqueProfiles = getUniqueProfileCount();
-          const currentScrollTop = useWindow ? window.scrollY : (target?.scrollTop ?? 0);
-          const scrollHeight = useWindow
-            ? Math.max(document.body.scrollHeight, document.documentElement.scrollHeight)
-            : (target?.scrollHeight ?? 0);
-          const clientHeight = useWindow
-            ? window.innerHeight
-            : (target?.clientHeight ?? 0);
-          const remaining = scrollHeight - (currentScrollTop + clientHeight);
-          const nearBottom = remaining <= Math.max(clientHeight * 0.2, 48);
-          const noNewProfiles = currentUniqueProfiles <= previousUniqueProfiles;
-          const noFurtherScroll = currentScrollTop <= previousScrollTop;
+          const currentWindowScrollY = window.scrollY;
+          const currentTargetScrollTop = target?.scrollTop ?? 0;
+          const noNewProfiles = collectedAuthors.size <= previousCollectedCount;
+          const windowAtBottom =
+            currentWindowScrollY + window.innerHeight >= getDocumentHeight() - 48;
+          const targetAtBottom = target
+            ? currentTargetScrollTop + target.clientHeight >= target.scrollHeight - 48
+            : true;
+          const noWindowMovement = currentWindowScrollY <= previousWindowScrollY;
+          const noTargetMovement = target ? currentTargetScrollTop <= previousTargetScrollTop : true;
 
-          if ((nearBottom && noNewProfiles) || (noNewProfiles && noFurtherScroll)) {
+          if (noNewProfiles && ((windowAtBottom && targetAtBottom) || (noWindowMovement && noTargetMovement))) {
             stableRounds += 1;
           } else {
             stableRounds = 0;
           }
 
-          previousUniqueProfiles = Math.max(previousUniqueProfiles, currentUniqueProfiles);
-          previousScrollTop = Math.max(previousScrollTop, currentScrollTop);
+          previousCollectedCount = Math.max(previousCollectedCount, collectedAuthors.size);
+          previousWindowScrollY = Math.max(previousWindowScrollY, currentWindowScrollY);
+          previousTargetScrollTop = Math.max(previousTargetScrollTop, currentTargetScrollTop);
 
-          if (stableRounds >= 6) {
+          if (stableRounds >= 8) {
             break;
           }
         }
 
-        if (useWindow) {
-          window.scrollTo({ top: 0, behavior: 'auto' });
-        } else if (target) {
+        window.scrollTo({ top: 0, behavior: 'auto' });
+        if (target) {
           target.scrollTop = 0;
         }
 
         return {
           rounds: Math.min(rounds, maxRounds),
-          detectedProfiles: getUniqueProfileCount(),
+          detectedProfiles: collectedAuthors.size,
           usedScrollableContainer: Boolean(target),
+          authors: Array.from(collectedAuthors.values()),
         };
       };
 
@@ -308,45 +408,17 @@ async function scanAuthorsInActivePage(mode: ScanMode): Promise<{
               rounds: 0,
               detectedProfiles: getUniqueProfileCount(),
               usedScrollableContainer: Boolean(getBestScrollTarget()),
+              authors: collectAuthorsFromVisibleDom(),
             };
-
-      const anchors = Array.from(
-        document.querySelectorAll<HTMLAnchorElement>('a[href*="/user/profile/"]'),
-      );
-      const authorMap = new Map<string, PageAuthor>();
-
-      for (const anchor of anchors) {
-        const profileUrl = normalizeProfileUrl(anchor.href);
-        if (!profileUrl) {
-          continue;
-        }
-
-        const userId = extractUserId(profileUrl);
-        if (!userId) {
-          continue;
-        }
-
-        const nickname = extractNickname(anchor);
-        if (!nickname) {
-          continue;
-        }
-
-        authorMap.set(userId, {
-          user_id: userId,
-          nickname,
-          profile_url: profileUrl,
-          tags: [],
-        });
-      }
 
       return {
         success: true,
         message: '',
-        authors: Array.from(authorMap.values()),
+        authors: diagnostics.authors,
         diagnostics,
       };
     },
-    args: [XHS_HOST, mode],
+    args: [XHS_HOST, mode, sessionId],
   });
 
   const payload = results[0]?.result;
@@ -368,6 +440,7 @@ export function PopupApp() {
   const [authors, setAuthors] = useState<Author[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [loading, setLoading] = useState(false);
+  const [activeScanSessionId, setActiveScanSessionId] = useState<string | null>(null);
   const [tagDraft, setTagDraft] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('authors');
   const [statusText, setStatusText] = useState('打开小红书搜索结果页，并勾选“已关注”筛选后开始扫描。');
@@ -376,6 +449,29 @@ export function PopupApp() {
   useEffect(() => {
     void refreshData();
   }, []);
+
+  useEffect(() => {
+    const listener = (message: ScanProgressMessage) => {
+      if (message.type !== 'SCAN_PROGRESS') {
+        return;
+      }
+
+      if (!activeScanSessionId || message.sessionId !== activeScanSessionId) {
+        return;
+      }
+
+      setStatusText(
+        `自动搜集中... 已滚动 ${message.round} 轮，累计识别 ${message.detectedProfiles} 位候选博主${
+          message.usedScrollableContainer ? '，当前使用结果容器滚动。' : '，当前使用整页滚动。'
+        }`,
+      );
+    };
+
+    chrome.runtime.onMessage.addListener(listener);
+    return () => {
+      chrome.runtime.onMessage.removeListener(listener);
+    };
+  }, [activeScanSessionId]);
 
   const untaggedAuthors = authors.filter((author) => author.tags.length === 0);
   const groupedAuthors = [
@@ -395,7 +491,9 @@ export function PopupApp() {
   }
 
   async function handleScanClick(mode: ScanMode) {
+    const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setLoading(true);
+    setActiveScanSessionId(sessionId);
     setStatusTone('idle');
     setStatusText(
       mode === 'auto'
@@ -404,7 +502,7 @@ export function PopupApp() {
     );
 
     try {
-      const { authors: scannedAuthors, diagnostics } = await scanAuthorsInActivePage(mode);
+      const { authors: scannedAuthors, diagnostics } = await scanAuthorsInActivePage(mode, sessionId);
       if (scannedAuthors.length === 0) {
         throw new Error('当前页面还没有可识别的博主卡片，请先滚动搜索结果页加载更多内容。');
       }
@@ -429,6 +527,7 @@ export function PopupApp() {
       setStatusTone('error');
       setStatusText(error instanceof Error ? error.message : '扫描失败，请稍后重试。');
     } finally {
+      setActiveScanSessionId(null);
       setLoading(false);
     }
   }
@@ -444,6 +543,18 @@ export function PopupApp() {
       setStatusTone('error');
       setStatusText(error instanceof Error ? error.message : '创建标签失败。');
     }
+  }
+
+  async function handleClearAuthors() {
+    const confirmed = window.confirm('确认清空所有已入库博主吗？此操作不会删除标签。');
+    if (!confirmed) {
+      return;
+    }
+
+    await storage.clearAuthors();
+    await refreshData();
+    setStatusTone('success');
+    setStatusText('已清空入库博主数据，标签已保留。');
   }
 
   async function handleDeleteTag(tagId: string) {
@@ -533,6 +644,17 @@ export function PopupApp() {
             <p className="text-xs uppercase tracking-[0.2em] text-slate-400">标签数</p>
             <p className="mt-1 text-2xl font-semibold">{tags.length}</p>
           </div>
+        </div>
+
+        <div className="mt-2 flex justify-end">
+          <button
+            type="button"
+            onClick={handleClearAuthors}
+            disabled={loading || authors.length === 0}
+            className="rounded-full bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+          >
+            清空入库博主
+          </button>
         </div>
 
         {viewMode === 'authors' ? (
