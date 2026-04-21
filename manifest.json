@@ -1,0 +1,34 @@
+{
+  "manifest_version": 3,
+  "name": "小红书关注整理助手",
+  "description": "在小红书搜索结果页扫描已关注博主，整理标签并为后续导出飞书做准备。",
+  "version": "0.1.0",
+  "action": {
+    "default_popup": "src/popup/index.html"
+  },
+  "permissions": [
+    "storage",
+    "tabs",
+    "scripting",
+    "activeTab",
+    "identity"
+  ],
+  "host_permissions": [
+    "https://www.xiaohongshu.com/*"
+  ],
+  "background": {
+    "service_worker": "src/background/index.ts",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.xiaohongshu.com/*"
+      ],
+      "js": [
+        "src/content/index.ts"
+      ],
+      "run_at": "document_idle"
+    }
+  ]
+}
