@@ -23,7 +23,7 @@
   "content_scripts": [
     {
       "js": [
-        "assets/index.ts-410eff83.js"
+        "assets/index.ts-94024488.js"
       ],
       "matches": [
         "https://www.xiaohongshu.com/*"
@@ -39,7 +39,7 @@
       "resources": [
         "src/popup/index.html",
         "assets/*",
-        "assets/index.ts-410eff83.js"
+        "assets/index.ts-94024488.js"
       ],
       "use_dynamic_url": false
     }

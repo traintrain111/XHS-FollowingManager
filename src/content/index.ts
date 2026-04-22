@@ -20,8 +20,8 @@ async function mountFloatingPanel(): Promise<void> {
   root.id = PANEL_ROOT_ID;
   root.style.all = 'initial';
   root.style.position = 'fixed';
-  root.style.top = '20px';
-  root.style.right = '20px';
+  root.style.top = '56px';
+  root.style.right = '8px';
   root.style.zIndex = '2147483647';
 
   const shadow = root.attachShadow({ mode: 'open' });
@@ -61,21 +61,26 @@ async function mountFloatingPanel(): Promise<void> {
       border-radius: 999px;
       background: rgba(15, 23, 42, 0.78);
       color: white;
-      font: 500 12px/1 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-      padding: 8px 10px;
+      font: 700 16px/1 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      width: 34px;
+      height: 34px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
       cursor: pointer;
     }
 
     .show-button {
       display: inline-flex;
       align-items: center;
-      gap: 8px;
+      justify-content: center;
       border: 0;
       border-radius: 999px;
       background: rgba(15, 23, 42, 0.9);
       color: white;
-      font: 600 12px/1 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
-      padding: 10px 14px;
+      font: 700 18px/1 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+      width: 42px;
+      height: 42px;
       box-shadow: 0 12px 30px rgba(15, 23, 42, 0.18);
       cursor: pointer;
     }
@@ -91,7 +96,9 @@ async function mountFloatingPanel(): Promise<void> {
   const hideButton = document.createElement('button');
   hideButton.className = 'hide-button';
   hideButton.type = 'button';
-  hideButton.textContent = '隐藏';
+  hideButton.textContent = '›';
+  hideButton.setAttribute('aria-label', '隐藏整理助手');
+  hideButton.title = '隐藏整理助手';
 
   const iframe = document.createElement('iframe');
   iframe.className = 'panel-frame';
@@ -102,7 +109,9 @@ async function mountFloatingPanel(): Promise<void> {
   const showButton = document.createElement('button');
   showButton.className = hidden ? 'show-button' : 'show-button hidden';
   showButton.type = 'button';
-  showButton.textContent = '展开整理助手';
+  showButton.textContent = '‹';
+  showButton.setAttribute('aria-label', '展开整理助手');
+  showButton.title = '展开整理助手';
 
   hideButton.addEventListener('click', async () => {
     panelShell.classList.add('hidden');

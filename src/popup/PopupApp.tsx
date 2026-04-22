@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { storage } from '../shared/storage';
 import { XHS_HOST } from '../shared/constants';
 import type { Author, Tag } from '../shared/types';
@@ -567,6 +567,7 @@ async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promi
     rounds: number;
     detectedProfiles: number;
     usedScrollableContainer: boolean;
+    stopped?: boolean;
   };
 }> {
   const tab = await getActiveTab();
@@ -883,7 +884,8 @@ async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promi
         }
       };
 
-      const autoScrollToLoadMore = async () => {
+        const autoScrollToLoadMore = async () => {
+        const stopAttributeName = 'data-xhs-stop-scan-session';
         const settleDelay = 950;
         const maxRounds = 120;
         const target = getBestScrollTarget();
@@ -896,12 +898,19 @@ async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promi
 
         const getDocumentHeight = () =>
           Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);
+        const isStopped = () =>
+          document.documentElement.getAttribute(stopAttributeName) === nextSessionId;
 
+        document.documentElement.removeAttribute(stopAttributeName);
         mergeCollectedAuthors(collectedAuthors, collectAuthorsFromVisibleDom());
         previousCollectedCount = collectedAuthors.size;
         reportProgress(0, collectedAuthors.size, Boolean(target));
 
         for (rounds = 1; rounds <= maxRounds; rounds += 1) {
+          if (isStopped()) {
+            break;
+          }
+
           const containerStep = Math.max((target?.clientHeight ?? window.innerHeight) * 1.05, 900);
           const windowStep = Math.max(window.innerHeight * 1.05, 900);
 
@@ -912,6 +921,9 @@ async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promi
           window.scrollBy({ top: windowStep, behavior: 'auto' });
           scrollLastAnchorIntoView(target);
           await delay(settleDelay);
+          if (isStopped()) {
+            break;
+          }
           scrollLastAnchorIntoView(target);
           await delay(250);
           mergeCollectedAuthors(collectedAuthors, collectAuthorsFromVisibleDom());
@@ -947,11 +959,14 @@ async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promi
         if (target) {
           target.scrollTop = 0;
         }
+        const stopped = isStopped();
+        document.documentElement.removeAttribute(stopAttributeName);
 
         return {
           rounds: Math.min(rounds, maxRounds),
           detectedProfiles: collectedAuthors.size,
           usedScrollableContainer: Boolean(target),
+          stopped,
           authors: Array.from(collectedAuthors.values()),
         };
       };
@@ -1016,6 +1031,21 @@ async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promi
     authors: payload.authors,
     diagnostics: payload.diagnostics,
   };
+}
+
+async function stopScanInActivePage(sessionId: string): Promise<void> {
+  const tab = await getActiveTab();
+  if (!tab.id) {
+    throw new Error('未找到当前标签页。');
+  }
+
+  await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: (nextSessionId: string) => {
+      document.documentElement.setAttribute('data-xhs-stop-scan-session', nextSessionId);
+    },
+    args: [sessionId],
+  });
 }
 
 export function PopupApp() {
@@ -1268,7 +1298,9 @@ export function PopupApp() {
       );
       setStatusTone('success');
       setStatusText(
-        response.added > 0
+        diagnostics?.stopped
+          ? `自动搜集已手动停止，当前先保留已累计识别到的 ${response.added + response.merged} 位博主。`
+          : response.added > 0
           ? `${
               mode === 'auto' ? '自动搜集完成' : '扫描完成'
             }，新增 ${response.added} 位已关注博主，并同步保存了推荐资料。${
@@ -1280,12 +1312,33 @@ export function PopupApp() {
             ? '自动搜集完成，但没有发现新的已关注博主。'
             : '扫描完成，本页没有发现新的已关注博主。',
       );
+      if (mode === 'auto' && diagnostics?.stopped) {
+        pushLog(
+          `自动搜集：用户手动停止。本轮已滚动 ${diagnostics.rounds} 次，累计识别 ${diagnostics.detectedProfiles} 位候选博主。`,
+        );
+      }
     } catch (error) {
       setStatusTone('error');
       setStatusText(error instanceof Error ? error.message : '扫描失败，请稍后重试。');
     } finally {
       setActiveScanSessionId(null);
       setLoading(false);
+    }
+  }
+
+  async function handleStopAutoScan() {
+    if (!activeScanSessionId) {
+      return;
+    }
+
+    try {
+      await stopScanInActivePage(activeScanSessionId);
+      setStatusTone('idle');
+      setStatusText('已发送停止指令，正在结束当前自动滚动搜集并保留已抓到的结果...');
+      pushLog('自动搜集：已发送停止指令，正在等待当前轮次结束。');
+    } catch (error) {
+      setStatusTone('error');
+      setStatusText(error instanceof Error ? error.message : '停止自动滚动失败，请稍后重试。');
     }
   }
 
@@ -1356,12 +1409,6 @@ export function PopupApp() {
     const followed = author.followed ?? true;
     const targetAction = followed ? 'unfollow' : 'follow';
     const actionLabel = followed ? '取消关注' : '关注';
-    const confirmed = window.confirm(
-      `将尝试为 ${author.nickname}${actionLabel}。插件会打开该博主主页并点击站内按钮，是否继续？`,
-    );
-    if (!confirmed) {
-      return;
-    }
 
     setLoading(true);
     setStatusTone('idle');
@@ -1382,30 +1429,37 @@ export function PopupApp() {
       }
 
       await waitForTabComplete(createdTabId, 15000);
-      await delay(2200);
 
       const results = await chrome.scripting.executeScript({
         target: { tabId: createdTabId },
-        func: (action: 'follow' | 'unfollow') => {
+        func: async (action: 'follow' | 'unfollow') => {
           const normalize = (text: string) => text.replace(/\s+/g, '').trim();
-          const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
-
+          const delay = (ms: number) =>
+            new Promise<void>((resolve) => {
+              window.setTimeout(resolve, ms);
+            });
           const targetTexts =
             action === 'unfollow'
               ? ['已关注', '已关注中', '关注中']
               : ['关注', '+关注'];
 
-          const targetButton = buttons.find((button) => {
-            const text = normalize(button.innerText || button.textContent || '');
-            return targetTexts.some((candidate) => text.includes(candidate));
-          });
+          for (let attempt = 0; attempt < 16; attempt += 1) {
+            const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
+            const targetButton = buttons.find((button) => {
+              const text = normalize(button.innerText || button.textContent || '');
+              return targetTexts.some((candidate) => text.includes(candidate));
+            });
 
-          if (!targetButton) {
-            return { success: false, reason: '未找到可操作的关注按钮。' };
+            if (targetButton) {
+              targetButton.click();
+              await delay(action === 'unfollow' ? 650 : 420);
+              return { success: true };
+            }
+
+            await delay(180);
           }
 
-          targetButton.click();
-          return { success: true };
+          return { success: false, reason: '未找到可操作的关注按钮。' };
         },
         args: [targetAction],
       });
@@ -1413,10 +1467,6 @@ export function PopupApp() {
       const result = results[0]?.result;
       if (!result?.success) {
         throw new Error(result?.reason || `${actionLabel}失败，请稍后重试。`);
-      }
-
-      if (targetAction === 'unfollow') {
-        await delay(1200);
       }
 
       const nextAuthors = await storage.setAuthorFollowed(author.user_id, !followed);
@@ -1451,17 +1501,18 @@ export function PopupApp() {
       return;
     }
 
-    const confirmed = window.confirm(
-      `将对 ${candidates.length} 位未分类博主执行慢速二次搜集：逐个打开主页，补抓简介后再自动分类。这个操作仍有风控风险，但已调慢速度。是否继续？`,
+    const shouldAutoClassify = window.confirm(
+      `将对 ${candidates.length} 位未分类博主执行慢速二次搜集。这个过程会慢速打开主页补抓简介，仍有一定风控风险。\n\n点击“确定”：二次搜集完成后自动分类\n点击“取消”：只补充资料，不自动分类`,
     );
-    if (!confirmed) {
-      return;
-    }
 
     setLoading(true);
     setStatusTone('idle');
     setStatusText('正在慢速二次搜集：逐个打开博主主页补抓资料...');
-    pushLog(`二次搜集开始：准备处理 ${candidates.length} 位未分类博主。`);
+    pushLog(
+      `二次搜集开始：准备处理 ${candidates.length} 位未分类博主。${
+        shouldAutoClassify ? '本轮结束后会自动分类。' : '本轮只补资料，不自动分类。'
+      }`,
+    );
 
     try {
       const updates = await collectAuthorProfileSummariesSlowly(
@@ -1506,18 +1557,10 @@ export function PopupApp() {
         );
       }
 
-      const shouldAutoClassify = window.confirm(
-        generatedTagCandidates.length > 0
-          ? `二次搜集已完成。系统根据简介内容生成了这些标签候选：${generatedTagCandidates
-              .slice(0, 8)
-              .map(({ tagName }) => tagName)
-              .join('、')}。是否立即自动创建这些标签并给命中的博主打标？`
-          : '二次搜集已完成，但这轮还没有稳定生成新的标签候选。是否仍然尝试按已有规则自动分类？',
-      );
       if (!shouldAutoClassify) {
         setStatusTone('success');
         setStatusText('二次搜集完成，已补充资料。你可以稍后再决定是否分类。');
-        pushLog('二次搜集结束：已补充资料，用户选择暂不自动分类。');
+        pushLog('二次搜集结束：已补充资料，本轮按开始时设置不自动分类。');
         return;
       }
 
@@ -1545,6 +1588,8 @@ export function PopupApp() {
         );
       }
 
+      const nextTags = await storage.getTags();
+      setTags(nextTags);
       setAuthors(appliedAuthors);
       const remainingUntyped = appliedAuthors.filter((author) => author.tags.length === 0).length;
       setStatusTone(appliedCount > 0 ? 'success' : 'error');
@@ -1580,9 +1625,6 @@ export function PopupApp() {
             XHS Following Manager
           </p>
           <h1 className="mt-2 text-2xl font-semibold text-slate-900">小红书关注整理助手</h1>
-          <p className="mt-2 text-sm leading-6 text-slate-600">
-            v1.1 已切换为“搜索结果页 + 已关注筛选”的采集路径，并补上基础标签管理与打标能力。
-          </p>
           <p className="mt-2 text-xs leading-5 text-slate-500">
             搜索结果很多时，优先点“自动滚动搜集”，插件会自己向下加载直到页面内容稳定。
           </p>
@@ -1613,6 +1655,18 @@ export function PopupApp() {
             {viewMode === 'authors' ? '管理标签' : '返回博主列表'}
           </button>
         </div>
+
+        {loading && activeScanSessionId ? (
+          <div className="mt-2 flex justify-end">
+            <button
+              type="button"
+              onClick={handleStopAutoScan}
+              className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-100"
+            >
+              停止滚动
+            </button>
+          </div>
+        ) : null}
 
         <div
           className={[
@@ -1753,9 +1807,7 @@ export function PopupApp() {
                                   />
                                 ) : null}
                                 <div className="min-w-0 flex-1">
-                                  <p className="truncate text-sm font-medium text-slate-900">
-                                    {author.nickname}
-                                  </p>
+                                  <TruncatedNickname nickname={author.nickname} />
                                   <a
                                     href={author.profile_url}
                                     target="_blank"
@@ -1938,9 +1990,7 @@ export function PopupApp() {
                                 />
                               ) : null}
                               <div className="min-w-0 flex-1">
-                                <p className="truncate text-sm font-medium text-slate-900">
-                                  {author.nickname}
-                                </p>
+                                <TruncatedNickname nickname={author.nickname} />
                                 <a
                                   href={author.profile_url}
                                   target="_blank"
@@ -2002,11 +2052,43 @@ export function PopupApp() {
             </div>
           </section>
         )}
-
-        <section className="mt-4 rounded-2xl bg-brand-soft px-4 py-3 text-sm text-slate-700">
-          飞书导出已预留数据结构，下一步可以继续接 F4/F5：OAuth 授权和按标签分组导出文档。
-        </section>
       </section>
     </main>
+  );
+}
+
+function TruncatedNickname({ nickname }: { nickname: string }) {
+  const textRef = useRef<HTMLParagraphElement | null>(null);
+  const [isTruncated, setIsTruncated] = useState(false);
+
+  useLayoutEffect(() => {
+    const checkTruncation = () => {
+      const element = textRef.current;
+      if (!element) {
+        setIsTruncated(false);
+        return;
+      }
+
+      setIsTruncated(element.scrollWidth > element.clientWidth + 1);
+    };
+
+    checkTruncation();
+    window.addEventListener('resize', checkTruncation);
+    return () => {
+      window.removeEventListener('resize', checkTruncation);
+    };
+  }, [nickname]);
+
+  return (
+    <div className="group relative">
+      <p ref={textRef} className="truncate text-sm font-medium text-slate-900">
+        {nickname}
+      </p>
+      {isTruncated ? (
+        <span className="pointer-events-none absolute left-0 top-full z-20 mt-1 hidden max-w-[240px] whitespace-normal rounded-xl bg-slate-900 px-2 py-1 text-xs font-medium text-white shadow-lg group-hover:block">
+          {nickname}
+        </span>
+      ) : null}
+    </div>
   );
 }
