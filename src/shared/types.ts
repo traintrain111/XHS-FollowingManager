@@ -3,6 +3,9 @@ export interface Author {
   nickname: string;
   profile_url: string;
   tags: string[];
+  followed?: boolean;
+  favorite?: boolean;
+  avatar_url?: string;
   note?: string;
   profile_summary?: string;
 }

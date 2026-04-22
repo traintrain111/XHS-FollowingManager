@@ -8,6 +8,21 @@ function dedupeTags(tags: string[]): string[] {
   return [...new Set(tags)].slice(0, MAX_AUTHOR_TAGS);
 }
 
+function mergeTextSummary(existing: string | undefined, incoming: string | undefined): string | undefined {
+  const parts = [existing, incoming]
+    .filter(Boolean)
+    .flatMap((value) => value!.split(/[\n|｜]/g))
+    .map((value) => value.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+
+  const uniqueParts = [...new Set(parts)];
+  if (uniqueParts.length === 0) {
+    return undefined;
+  }
+
+  return uniqueParts.join(' | ').slice(0, 500);
+}
+
 function mergeAuthor(existing: Author | undefined, incoming: Author): Author {
   if (!existing) {
     return {
@@ -21,8 +36,11 @@ function mergeAuthor(existing: Author | undefined, incoming: Author): Author {
     nickname: incoming.nickname || existing.nickname,
     profile_url: incoming.profile_url || existing.profile_url,
     tags: dedupeTags([...existing.tags, ...incoming.tags]),
+    followed: existing.followed ?? incoming.followed ?? true,
+    favorite: existing.favorite ?? incoming.favorite,
+    avatar_url: incoming.avatar_url || existing.avatar_url,
     note: existing.note ?? incoming.note,
-    profile_summary: existing.profile_summary ?? incoming.profile_summary,
+    profile_summary: mergeTextSummary(existing.profile_summary, incoming.profile_summary),
   };
 }
 
@@ -204,6 +222,36 @@ export const storage = {
     return nextAuthors;
   },
 
+  async toggleAuthorFavorite(userId: string): Promise<Author[]> {
+    const authors = await this.getAuthors();
+    const nextAuthors = authors.map((author) =>
+      author.user_id === userId
+        ? {
+            ...author,
+            favorite: !author.favorite,
+          }
+        : author,
+    );
+
+    await chrome.storage.local.set({ [STORAGE_KEYS.AUTHORS]: nextAuthors });
+    return nextAuthors;
+  },
+
+  async setAuthorFollowed(userId: string, followed: boolean): Promise<Author[]> {
+    const authors = await this.getAuthors();
+    const nextAuthors = authors.map((author) =>
+      author.user_id === userId
+        ? {
+            ...author,
+            followed,
+          }
+        : author,
+    );
+
+    await chrome.storage.local.set({ [STORAGE_KEYS.AUTHORS]: nextAuthors });
+    return nextAuthors;
+  },
+
   async updateAuthorNote(userId: string, note: string): Promise<Author[]> {
     const normalizedNote = note.trim();
     const authors = await this.getAuthors();
@@ -224,6 +272,7 @@ export const storage = {
     updates: Array<{
       user_id: string;
       nickname?: string;
+      avatar_url?: string;
       profile_summary?: string;
     }>,
   ): Promise<Author[]> {
@@ -238,6 +287,7 @@ export const storage = {
       return {
         ...author,
         nickname: update.nickname || author.nickname,
+        avatar_url: update.avatar_url || author.avatar_url,
         profile_summary: update.profile_summary || author.profile_summary,
       };
     });
