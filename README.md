@@ -1,5 +1,3 @@
-<img width="567" height="594" alt="截屏2026-04-22 11 38 40" src="https://github.com/user-attachments/assets/644d0dd6-d608-4419-ad98-dc1957f51a3d" /># 小红书关注整理助手 ✨
-
 一个用于整理小红书已关注博主的 Chrome 扩展 🧺
 
 当前版本的核心思路是：
@@ -100,7 +98,7 @@ npm run build
 1. 输入一个关键词
 2. 鼠标移到`筛选`
 3. 勾选 `已关注`
-
+<img width="567" height="594" alt="截屏2026-04-22 11 38 40" src="https://github.com/user-attachments/assets/644d0dd6-d608-4419-ad98-dc1957f51a3d" /># 小红书关注整理助手 ✨
 然后再开始搜集。
 
 ### 4. 确认右上角已经出现悬浮面板 📌
