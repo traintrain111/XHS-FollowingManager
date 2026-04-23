@@ -1874,7 +1874,7 @@ export function PopupApp() {
 
       setStatusTone('info');
       setStatusText(
-        `自动搜集中... 已滚动 ${message.round} 轮，累计识别 ${message.detectedProfiles} 位候选博主${
+        `自动搜集中... 滚动 ${message.round}，候选博主 ${message.detectedProfiles}${
           message.usedScrollableContainer ? '，当前使用结果容器滚动。' : '，当前使用整页滚动。'
         }`,
       );
@@ -2093,18 +2093,18 @@ export function PopupApp() {
       pushLog(
         `${
           mode === 'auto' ? '自动搜集' : '扫描当前页'
-        }：新增 ${response.added} 位，合并 ${response.merged} 位。`,
+        }：新增 ${response.added}，合并 ${response.merged}。`,
       );
       setStatusTone('success');
       setStatusText(
         diagnostics?.stopped
-          ? `自动搜集已手动停止，当前先保留已累计识别到的 ${response.added + response.merged} 位博主。`
+          ? `自动搜集已手动停止，保留博主 ${response.added + response.merged}。`
           : response.added > 0
           ? `${
               mode === 'auto' ? '自动搜集完成' : '扫描完成'
-            }，新增 ${response.added} 位已关注博主，并同步保存了推荐资料。${
+            }，新增已关注博主 ${response.added}，并同步保存了推荐资料。${
               mode === 'auto' && diagnostics
-                ? `本轮滚动 ${diagnostics.rounds} 次，识别到 ${diagnostics.detectedProfiles} 位候选博主。`
+                ? `滚动 ${diagnostics.rounds}，候选博主 ${diagnostics.detectedProfiles}。`
                 : '当前本地库已自动合并重复数据。'
             }`
           : mode === 'auto'
@@ -2113,7 +2113,7 @@ export function PopupApp() {
       );
       if (mode === 'auto' && diagnostics?.stopped) {
         pushLog(
-          `自动搜集：用户手动停止。本轮已滚动 ${diagnostics.rounds} 次，累计识别 ${diagnostics.detectedProfiles} 位候选博主。`,
+          `自动搜集：用户手动停止。滚动 ${diagnostics.rounds}，候选博主 ${diagnostics.detectedProfiles}。`,
         );
       }
     } catch (error) {
@@ -2276,7 +2276,7 @@ export function PopupApp() {
           <button
             type="button"
             onClick={() => toggleTagEditor(author.user_id)}
-            className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+            className="rounded-full border border-slate-300 bg-white px-2 py-1 text-[11px] text-slate-700 transition hover:border-slate-400 hover:bg-slate-50"
           >
             ＋
           </button>
@@ -2285,7 +2285,7 @@ export function PopupApp() {
         {isEditing ? (
           <div className="mt-3 flex flex-wrap gap-2">
             {availableTagPool.length === 0 ? (
-              <span className="text-xs text-slate-400">暂无可用标签</span>
+              <span className="text-xs text-slate-500">暂无可用标签</span>
             ) : (
               availableTagPool.map((tagName) => {
                 const isSelected = author.tags.includes(tagName);
@@ -2301,8 +2301,8 @@ export function PopupApp() {
                       'rounded-full border px-2.5 py-1 text-xs transition',
                       isSelected
                         ? 'border-slate-900 bg-slate-900 text-white'
-                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
-                      isDisabled && 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 hover:border-slate-200',
+                        : 'border-slate-300 bg-white text-slate-700 hover:border-slate-400',
+                      isDisabled && 'cursor-not-allowed border-slate-300 bg-slate-100 text-slate-500 hover:border-slate-300',
                     ]
                       .filter(Boolean)
                       .join(' ')}
@@ -2411,7 +2411,7 @@ export function PopupApp() {
     }
 
     const shouldAutoClassify = window.confirm(
-      `将对 ${candidates.length} 位未分类博主执行慢速二次搜集。这个过程会慢速打开主页补抓简介，仍有一定风控风险。\n\n点击“确定”：二次搜集完成后自动分类\n点击“取消”：只补充资料，不自动分类`,
+      `将处理未分类博主 ${candidates.length}。这个过程会慢速打开主页补抓简介，仍有一定风控风险。\n\n点击“确定”：二次搜集完成后自动分类\n点击“取消”：只补充资料，不自动分类`,
     );
 
     setLoading(true);
@@ -2420,7 +2420,7 @@ export function PopupApp() {
     setStatusTone('idle');
     setStatusText('正在慢速二次搜集：逐个打开博主主页补抓资料...');
     pushLog(
-      `二次搜集开始：准备处理 ${candidates.length} 位未分类博主。${
+      `二次搜集开始：准备处理未分类博主 ${candidates.length}。${
         shouldAutoClassify ? '本轮结束后会自动分类。' : '本轮只补资料，不自动分类。'
       }`,
     );
@@ -2429,9 +2429,9 @@ export function PopupApp() {
       const updates = await collectAuthorProfileSummariesSlowly(
         candidates,
         (finished, total, nickname) => {
-          setStatusText(
-            `正在慢速二次搜集 ${finished + 1}/${total}：${nickname}。每位博主之间会额外等待几秒。`,
-          );
+        setStatusText(
+            `正在慢速二次搜集 ${finished + 1}/${total}：${nickname}。博主之间会额外等待几秒。`,
+        );
         },
         () => secondaryCollectStopRequestedRef.current,
       );
@@ -2466,8 +2466,8 @@ export function PopupApp() {
         setTags(nextTags);
         setAuthors(nextAuthors);
         setStatusTone('success');
-        setStatusText(`二次搜集已手动停止，已先保留 ${updates.length} 位博主本轮补充到的资料。`);
-        pushLog(`二次搜集结束：用户手动停止，本轮保留了 ${updates.length} 位博主的补充资料。`);
+        setStatusText(`二次搜集已手动停止，保留补充资料 ${updates.length}。`);
+        pushLog(`二次搜集结束：用户手动停止，保留补充资料 ${updates.length}。`);
         return;
       }
 
@@ -2518,13 +2518,13 @@ export function PopupApp() {
       setStatusTone(appliedCount > 0 ? 'success' : 'error');
       setStatusText(
         appliedCount > 0
-          ? `二次搜集完成，并已为 ${appliedCount} 位博主自动打上标签。仍有 ${remainingUntyped} 位未分类。`
+          ? `二次搜集完成，自动打标 ${appliedCount}，未分类 ${remainingUntyped}。`
           : '二次搜集完成，但这轮仍没有命中更多可用标签。',
       );
       pushLog(
         appliedCount > 0
-          ? `二次搜集结束：新增 ${appliedCount} 位命中标签，剩余 ${remainingUntyped} 位未分类。`
-          : '二次搜集结束：0 位命中新标签。',
+          ? `二次搜集结束：新增命中 ${appliedCount}，未分类 ${remainingUntyped}。`
+          : '二次搜集结束：命中 0。',
       );
     } catch (error) {
       setStatusTone('error');
@@ -2544,7 +2544,7 @@ export function PopupApp() {
 
   return (
     <main className="w-[472px] bg-[radial-gradient(circle_at_top,_rgba(254,226,226,0.9),_rgba(255,255,255,1)_50%)] p-5 text-slate-900">
-      <section className="rounded-3xl bg-white/90 p-4 shadow-panel ring-1 ring-slate-200">
+      <section className="rounded-3xl bg-white/95 p-4 shadow-panel ring-1 ring-slate-300">
         {viewMode === 'authors' ? (
           <>
             <div className="mb-4">
@@ -2552,12 +2552,12 @@ export function PopupApp() {
                 XHS Following Manager
               </p>
               <h1 className="mt-2 text-2xl font-semibold text-slate-900">小红书关注整理助手</h1>
-              <p className="mt-2 text-xs leading-5 text-slate-500">
+              <p className="mt-2 text-xs leading-5 text-slate-600">
                 打开小红书搜索结果页，并勾选“已关注”筛选后开始扫描。
               </p>
             </div>
 
-            <div className="border-b border-slate-200 pb-4">
+            <div className="border-b border-slate-300 pb-4">
           <div className="flex items-center justify-end gap-2">
             <div className="flex items-center gap-2">
               {loading && activeScanSessionId ? (
@@ -2585,7 +2585,7 @@ export function PopupApp() {
               type="button"
               onClick={() => handleScanClick('page')}
               disabled={loading}
-              className="rounded-[20px] border-2 border-[#ffd6dd] bg-white px-3 py-3 text-sm font-semibold text-slate-700 shadow-[0_4px_12px_rgba(255,36,66,0.06)] transition hover:-translate-y-[1px] hover:border-[#ff9fb0] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+              className="rounded-[20px] border-2 border-[#ffb8c4] bg-white px-3 py-3 text-sm font-semibold text-slate-800 shadow-[0_4px_12px_rgba(255,36,66,0.08)] transition hover:-translate-y-[1px] hover:border-[#ff7f95] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500"
             >
               {loading ? '处理中...' : '扫描当前页'}
             </button>
@@ -2593,7 +2593,7 @@ export function PopupApp() {
               type="button"
               onClick={() => handleScanClick('auto')}
               disabled={loading}
-              className="rounded-[20px] border-2 border-[#ffd6dd] bg-white px-3 py-3 text-sm font-semibold text-slate-700 shadow-[0_4px_12px_rgba(255,36,66,0.06)] transition hover:-translate-y-[1px] hover:border-[#ff9fb0] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+              className="rounded-[20px] border-2 border-[#ffb8c4] bg-white px-3 py-3 text-sm font-semibold text-slate-800 shadow-[0_4px_12px_rgba(255,36,66,0.08)] transition hover:-translate-y-[1px] hover:border-[#ff7f95] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500"
             >
               {loading ? '处理中...' : '自动滚动搜集'}
             </button>
@@ -2601,7 +2601,7 @@ export function PopupApp() {
               type="button"
               onClick={handleSecondaryCollect}
               disabled={loading || authors.filter((author) => author.tags.length === 0).length === 0}
-              className="rounded-[20px] border-2 border-[#ffd6dd] bg-white px-3 py-3 text-sm font-semibold text-slate-700 shadow-[0_4px_12px_rgba(255,36,66,0.06)] transition hover:-translate-y-[1px] hover:border-[#ff9fb0] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+              className="rounded-[20px] border-2 border-[#ffb8c4] bg-white px-3 py-3 text-sm font-semibold text-slate-800 shadow-[0_4px_12px_rgba(255,36,66,0.08)] transition hover:-translate-y-[1px] hover:border-[#ff7f95] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500"
             >
               二次搜集
             </button>
@@ -2610,26 +2610,26 @@ export function PopupApp() {
             <button
               type="button"
               onClick={() => setViewMode('tags')}
-              className="flex items-center justify-center gap-2 rounded-[18px] border border-[#ffd6dd] bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_2px_8px_rgba(255,36,66,0.05)] transition hover:border-[#ffb8c4] hover:bg-[#fff8fa] hover:text-[#ff2442]"
+              className="flex items-center justify-center gap-2 rounded-[18px] border border-[#ffb8c4] bg-[#ffe7ed] px-3 py-2 text-sm font-medium text-slate-800 shadow-[0_2px_8px_rgba(255,36,66,0.08)] transition hover:border-[#ff8ea0] hover:bg-[#ffdbe4] hover:text-[#ff2442]"
             >
-              <TagLineIcon className="h-4 w-4 text-[#ff6b81]" />
+              <TagLineIcon className="h-5 w-5 text-[#ff4d6d]" />
               标签
             </button>
             <button
               type="button"
               onClick={() => setViewMode('favorites')}
-              className="flex items-center justify-center gap-2 rounded-[18px] border border-[#ffd6dd] bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_2px_8px_rgba(255,36,66,0.05)] transition hover:border-[#ffb8c4] hover:bg-[#fff8fa] hover:text-[#ff2442]"
+              className="flex items-center justify-center gap-2 rounded-[18px] border border-[#ffb8c4] bg-[#ffe7ed] px-3 py-2 text-sm font-medium text-slate-800 shadow-[0_2px_8px_rgba(255,36,66,0.08)] transition hover:border-[#ff8ea0] hover:bg-[#ffdbe4] hover:text-[#ff2442]"
             >
-              <BookmarkLineIcon className="h-4 w-4 text-[#ff6b81]" />
+              <BookmarkLineIcon className="h-5 w-5 text-[#ff4d6d]" />
               收藏夹
             </button>
             <button
               type="button"
               onClick={handleClearAuthors}
               disabled={loading || authors.length === 0}
-              className="flex items-center justify-center gap-2 rounded-[18px] border border-[#ffd6dd] bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_2px_8px_rgba(255,36,66,0.05)] transition hover:border-[#ffb8c4] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
+              className="flex items-center justify-center gap-2 rounded-[18px] border border-[#ffb8c4] bg-[#ffe7ed] px-3 py-2 text-sm font-medium text-slate-800 shadow-[0_2px_8px_rgba(255,36,66,0.08)] transition hover:border-[#ff8ea0] hover:bg-[#ffdbe4] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500"
             >
-              <TrashLineIcon className="h-4 w-4 text-[#ff8ea0]" />
+              <TrashLineIcon className="h-5 w-5 text-[#ff5f78]" />
               清空入库博主
             </button>
           </div>
@@ -2650,13 +2650,13 @@ export function PopupApp() {
           </div>
         ) : null}
 
-        <div className="mt-4 border-t border-slate-200 pt-3 text-xs text-slate-600">
+        <div className="mt-4 border-t border-slate-300 pt-3 text-xs text-slate-700">
           <div className="flex items-center justify-between gap-3">
             <p className="font-semibold text-slate-700">运行日志</p>
-            <span className="text-slate-400">最近 {activityLogs.length} 条</span>
+            <span className="text-slate-500">最近 {activityLogs.length}</span>
           </div>
           {activityLogs.length === 0 ? (
-            <p className="mt-2 leading-5 text-slate-500">还没有日志。开始扫描、自动分类或二次搜集后，这里会显示命中原因。</p>
+            <p className="mt-2 leading-5 text-slate-600">还没有日志。开始扫描、自动分类或二次搜集后，这里会显示命中原因。</p>
           ) : (
             <div className="mt-2 space-y-2">
               {activityLogs.map((log, index) => (
@@ -2673,7 +2673,7 @@ export function PopupApp() {
             <button
               type="button"
               onClick={() => setViewMode('authors')}
-              className="absolute left-0 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
+              className="absolute left-0 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-medium text-slate-800 transition hover:border-slate-400 hover:bg-slate-50"
             >
               返回
             </button>
@@ -2690,15 +2690,15 @@ export function PopupApp() {
                 <h2 className="text-sm font-semibold text-slate-900">
                   {viewMode === 'favorites' ? '收藏博主' : '已搜集博主'}
                 </h2>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600 ring-1 ring-slate-300">
                   {viewMode === 'favorites'
-                    ? `${authors.filter((author) => author.favorite).length} 位收藏`
-                    : `${authors.length} 位`}
+                    ? authors.filter((author) => author.favorite).length
+                    : authors.length}
                 </span>
               </div>
               {viewMode === 'authors' ? (
-                <span className="text-xs text-slate-500">
-                  {authors.filter((author) => author.tags.length > 0).length} 位已自动分类
+                <span className="text-xs text-slate-600">
+                  已自动分类 {authors.filter((author) => author.tags.length > 0).length}
                 </span>
               ) : null}
             </div>
@@ -2707,7 +2707,7 @@ export function PopupApp() {
               value={searchQuery}
               onChange={(event) => setSearchQuery(event.target.value)}
               placeholder="搜索昵称、主页链接、标签或备注"
-              className="mb-3 w-full rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-red-300"
+              className="mb-3 w-full rounded-2xl border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-[#ff8ea0]"
             />
 
             {tags.length === 0 ? (
@@ -2717,11 +2717,11 @@ export function PopupApp() {
             ) : null}
 
             {authors.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
+              <div className="rounded-2xl border border-dashed border-slate-400 px-4 py-6 text-center text-sm text-slate-600">
                 还没有数据。先去搜索结果页勾选“已关注”，再点击上方按钮扫描当前页。
               </div>
             ) : groupedAuthors.length === 0 ? (
-              <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
+              <div className="rounded-2xl border border-dashed border-slate-400 px-4 py-6 text-center text-sm text-slate-600">
                 {viewMode === 'favorites' ? '收藏夹里还没有博主。' : '没有匹配到相关博主，试试别的关键词。'}
               </div>
             ) : (
@@ -2729,24 +2729,24 @@ export function PopupApp() {
                 {groupedAuthors.map((group) => (
                   <div key={group.label}>
                     <div className="mb-2 flex items-center justify-between">
-                      <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">
+                      <h3 className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-600">
                         {group.label}
                       </h3>
-                      <span className="text-xs text-slate-400">{group.authors.length} 位</span>
+                      <span className="text-xs text-slate-500">{group.authors.length}</span>
                     </div>
 
                     <ul className="space-y-2">
                       {group.authors.map((author) => (
                         <li
                           key={author.user_id}
-                          className="relative rounded-2xl border border-slate-200 px-3 py-3"
+                          className="relative rounded-2xl border border-slate-300 px-3 py-3 shadow-[0_1px_3px_rgba(15,23,42,0.05)]"
                         >
                           <button
                             type="button"
                             onClick={() => handleDeleteAuthor(author)}
                             aria-label="删除入库博主"
                             title="删除入库博主"
-                            className="absolute -left-1.5 -top-1.5 z-10 h-6 w-6 rounded-full border border-slate-200 bg-white text-xs leading-none text-slate-400 shadow-sm transition hover:border-red-200 hover:bg-red-50 hover:text-red-500"
+                            className="absolute -left-1.5 -top-1.5 z-10 h-6 w-6 rounded-full border border-slate-300 bg-white text-xs leading-none text-slate-500 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-500"
                           >
                             ×
                           </button>
@@ -2757,7 +2757,7 @@ export function PopupApp() {
                                   <img
                                     src={author.avatar_url}
                                     alt={author.nickname}
-                                    className="h-10 w-10 shrink-0 rounded-full object-cover ring-1 ring-slate-200"
+                                    className="h-10 w-10 shrink-0 rounded-full object-cover ring-1 ring-slate-300"
                                   />
                                 ) : null}
                                 <div className="min-w-0 flex-1">
@@ -2766,7 +2766,7 @@ export function PopupApp() {
                                     href={author.profile_url}
                                     target="_blank"
                                     rel="noreferrer"
-                                    className="mt-1 block truncate text-xs text-slate-500 hover:text-brand"
+                                    className="mt-1 block truncate text-xs text-slate-600 hover:text-brand"
                                   >
                                     {author.profile_url}
                                   </a>
@@ -2782,7 +2782,7 @@ export function PopupApp() {
                                   'rounded-full px-2.5 py-1 text-[11px] transition',
                                   (author.followed ?? true)
                                     ? 'bg-slate-900 text-white hover:bg-slate-800'
-                                    : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50',
+                                    : 'bg-white text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50',
                                 ].join(' ')}
                               >
                                 {author.followed ?? true ? '已关注' : '关注'}
@@ -2812,7 +2812,7 @@ export function PopupApp() {
                               onBlur={(event) => handleNoteBlur(author, event.target.value)}
                               rows={2}
                               placeholder="添加备注，例如：探店风格稳定，后续归到美食精选"
-                              className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-xs text-slate-700 outline-none transition focus:border-red-300"
+                              className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-xs text-slate-700 outline-none transition focus:border-[#ff8ea0]"
                             />
                           </div>
                         </li>
@@ -2826,7 +2826,7 @@ export function PopupApp() {
         ) : (
           <section className="mt-4">
             <div className="mb-3">
-              <p className="text-xs leading-5 text-slate-500">
+              <p className="text-xs leading-5 text-slate-600">
                 标签上限 20 个，删除标签会同步清除博主身上的对应标记。点击标签卡片可查看该标签下的博主。
               </p>
             </div>
@@ -2837,7 +2837,7 @@ export function PopupApp() {
                 onChange={(event) => setTagDraft(event.target.value)}
                 placeholder="输入新标签，例如：美食"
                 maxLength={20}
-                className="min-w-0 flex-1 rounded-2xl border border-slate-200 px-3 py-2 text-sm outline-none transition focus:border-red-300"
+                className="min-w-0 flex-1 rounded-2xl border border-slate-300 px-3 py-2 text-sm outline-none transition focus:border-[#ff8ea0]"
               />
               <button
                 type="button"
@@ -2850,7 +2850,7 @@ export function PopupApp() {
 
             <div className="mt-4">
               {tags.length === 0 && untaggedTagCount === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
+                <div className="rounded-2xl border border-dashed border-slate-400 px-4 py-6 text-center text-sm text-slate-600">
                   还没有手动创建的标签。你可以直接新建，也可以先去博主列表接受系统推荐标签。
                 </div>
               ) : (
@@ -2876,8 +2876,8 @@ export function PopupApp() {
                       className={[
                         'relative rounded-[20px] border px-2.5 py-2.5 transition',
                         selectedTagId === tag.id
-                          ? 'border-red-200 bg-red-50'
-                          : 'border-slate-200 bg-white hover:border-slate-300',
+                          ? 'border-red-300 bg-red-50'
+                          : 'border-slate-300 bg-white hover:border-slate-400',
                       ].join(' ')}
                     >
                       {tag.isUntagged ? null : (
@@ -2886,7 +2886,7 @@ export function PopupApp() {
                           onClick={() => handleDeleteTag(tag.id)}
                           aria-label={`删除标签 ${tag.name}`}
                           title={`删除标签 ${tag.name}`}
-                          className="absolute right-2 top-2 h-5 w-5 rounded-full bg-slate-100 text-[10px] leading-none text-slate-500 transition hover:bg-slate-200"
+                          className="absolute right-2 top-2 h-5 w-5 rounded-full bg-slate-100 text-[10px] leading-none text-slate-600 ring-1 ring-slate-300 transition hover:bg-slate-200"
                         >
                           ×
                         </button>
@@ -2900,8 +2900,8 @@ export function PopupApp() {
                           <span className="text-base leading-none">{getTagDisplayIcon(tag.name)}</span>
                           <p className="truncate text-sm font-medium text-slate-900">{tag.name}</p>
                         </div>
-                        <p className="mt-2 text-xs text-slate-500">
-                          {tag.isUntagged ? `${tag.taggedCount} 位博主未打标` : tag.taggedCount}
+                        <p className="mt-2 text-xs text-slate-600">
+                          {tag.isUntagged ? `未打标 ${tag.taggedCount}` : tag.taggedCount}
                         </p>
                       </button>
                     </div>
@@ -2915,17 +2915,17 @@ export function PopupApp() {
                 <h3 className="text-sm font-semibold text-slate-900">
                   {selectedTag ? `「${selectedTag.name}」下的博主` : '选择一个标签查看博主'}
                 </h3>
-                <span className="text-xs text-slate-500">
-                  {selectedTag ? `${selectedTagAuthors.length} 位` : ''}
+                <span className="text-xs text-slate-600">
+                  {selectedTag ? selectedTagAuthors.length : ''}
                 </span>
               </div>
 
               {!selectedTag ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
+                <div className="rounded-2xl border border-dashed border-slate-400 px-4 py-6 text-center text-sm text-slate-600">
                   点击上方任一标签卡片，即可查看该标签下的博主。
                 </div>
               ) : selectedTagAuthors.length === 0 ? (
-                <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
+                <div className="rounded-2xl border border-dashed border-slate-400 px-4 py-6 text-center text-sm text-slate-600">
                   这个标签下还没有博主。
                 </div>
               ) : (
@@ -2933,14 +2933,14 @@ export function PopupApp() {
                   {selectedTagAuthors.map((author) => (
                     <div
                       key={author.user_id}
-                      className="relative rounded-2xl border border-slate-200 px-3 py-3"
+                      className="relative rounded-2xl border border-slate-300 px-3 py-3 shadow-[0_1px_3px_rgba(15,23,42,0.05)]"
                     >
                         <button
                           type="button"
                           onClick={() => handleDeleteAuthor(author)}
                           aria-label="删除入库博主"
                           title="删除入库博主"
-                          className="absolute -left-1.5 -top-1.5 z-10 h-6 w-6 rounded-full border border-slate-200 bg-white text-xs leading-none text-slate-400 shadow-sm transition hover:border-red-200 hover:bg-red-50 hover:text-red-500"
+                          className="absolute -left-1.5 -top-1.5 z-10 h-6 w-6 rounded-full border border-slate-300 bg-white text-xs leading-none text-slate-500 shadow-sm transition hover:border-red-300 hover:bg-red-50 hover:text-red-500"
                         >
                           ×
                         </button>
@@ -2951,7 +2951,7 @@ export function PopupApp() {
                                 <img
                                   src={author.avatar_url}
                                   alt={author.nickname}
-                                  className="h-10 w-10 shrink-0 rounded-full object-cover ring-1 ring-slate-200"
+                                  className="h-10 w-10 shrink-0 rounded-full object-cover ring-1 ring-slate-300"
                                 />
                               ) : null}
                               <div className="min-w-0 flex-1">
@@ -2960,7 +2960,7 @@ export function PopupApp() {
                                   href={author.profile_url}
                                   target="_blank"
                                   rel="noreferrer"
-                                  className="mt-1 block truncate text-xs text-slate-500 hover:text-brand"
+                                  className="mt-1 block truncate text-xs text-slate-600 hover:text-brand"
                                 >
                                   {author.profile_url}
                                 </a>
@@ -2976,7 +2976,7 @@ export function PopupApp() {
                                 'rounded-full px-2.5 py-1 text-[11px] transition',
                                 (author.followed ?? true)
                                   ? 'bg-slate-900 text-white hover:bg-slate-800'
-                                  : 'bg-white text-slate-700 ring-1 ring-slate-200 hover:bg-slate-50',
+                                  : 'bg-white text-slate-800 ring-1 ring-slate-300 hover:bg-slate-50',
                               ].join(' ')}
                             >
                               {author.followed ?? true ? '已关注' : '关注'}
@@ -3006,7 +3006,7 @@ export function PopupApp() {
                             onBlur={(event) => handleNoteBlur(author, event.target.value)}
                             rows={2}
                             placeholder="添加备注，例如：这位主要做旅行攻略合集"
-                            className="w-full rounded-2xl border border-slate-200 px-3 py-2 text-xs text-slate-700 outline-none transition focus:border-red-300"
+                            className="w-full rounded-2xl border border-slate-300 px-3 py-2 text-xs text-slate-700 outline-none transition focus:border-[#ff8ea0]"
                           />
                         </div>
                     </div>
