@@ -6,6 +6,26 @@ import type { Author, Tag } from '../shared/types';
 type StatusTone = 'idle' | 'info' | 'success' | 'error';
 type ViewMode = 'authors' | 'tags' | 'favorites';
 type ScanMode = 'page' | 'auto';
+type MentionCandidate = {
+  nickname: string;
+  avatar_url?: string;
+};
+type MentionSearchResolveResult = {
+  author: Author | null;
+  reason: string;
+  verificationDetected?: boolean;
+};
+type MentionScanFailure = {
+  nickname: string;
+  reason: string;
+};
+type PausedMentionScanState = {
+  candidates: MentionCandidate[];
+  nextIndex: number;
+  collectedAuthors: Author[];
+  failures: MentionScanFailure[];
+  windowId?: number;
+};
 type ScanProgressMessage = {
   type: 'SCAN_PROGRESS';
   sessionId: string;
@@ -1827,6 +1847,1238 @@ async function scanAuthorsInActivePage(mode: ScanMode, sessionId: string): Promi
   };
 }
 
+async function collectMentionCandidatesInActivePage(): Promise<MentionCandidate[]> {
+  const tab = await getActiveTab();
+  if (!tab.id) {
+    throw new Error('未找到当前标签页。');
+  }
+
+  if (!tab.url?.includes(XHS_HOST)) {
+    throw new Error('请先切换到小红书首页或笔记页面后再采集 @ 名单。');
+  }
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: async () => {
+      type PageMentionCandidate = {
+        nickname: string;
+        avatar_url?: string;
+      };
+
+      const delay = (ms: number) =>
+        new Promise<void>((resolve) => {
+          window.setTimeout(resolve, ms);
+        });
+      const isVisible = (element: Element | null): element is HTMLElement => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 8 && rect.height > 8 && style.visibility !== 'hidden' && style.display !== 'none';
+      };
+      const normalizeText = (text: string) => text.replace(/\s+/g, ' ').trim();
+      const findFirstNoteTrigger = (): HTMLElement | null => {
+        const anchors = Array.from(
+          document.querySelectorAll<HTMLAnchorElement>(
+            'a.cover[href^="/explore/"], a[href^="/explore/"], a[href*="/discovery/item/"]',
+          ),
+        )
+          .filter(isVisible)
+          .filter((anchor) => !(anchor.getAttribute('href') ?? '').includes('/user/profile/'))
+          .sort((a, b) => {
+            const aRect = a.getBoundingClientRect();
+            const bRect = b.getBoundingClientRect();
+            return aRect.top - bRect.top || aRect.left - bRect.left;
+          });
+        return anchors[0] ?? null;
+      };
+      const getCommentInput = () =>
+        document.querySelector<HTMLElement>(
+          '#noteContainer #content-textarea[contenteditable="true"], .note-container #content-textarea[contenteditable="true"], #content-textarea[contenteditable="true"]',
+        );
+      const hasDetailOverlay = () =>
+        Boolean(isVisible(document.querySelector<HTMLElement>('#noteContainer, .note-container')) && isVisible(getCommentInput()));
+      const readCandidates = (): PageMentionCandidate[] => {
+        const map = new Map<string, PageMentionCandidate>();
+        for (const item of Array.from(document.querySelectorAll<HTMLElement>('#mentionList.active li, #mentionList li')).filter(isVisible)) {
+          const nickname = normalizeText(item.querySelector<HTMLElement>('.name')?.innerText || item.innerText || '');
+          const avatarUrl = item.querySelector<HTMLImageElement>('img')?.src || undefined;
+          if (nickname) {
+            map.set(`${nickname}|${avatarUrl ?? ''}`, { nickname, avatar_url: avatarUrl });
+          }
+        }
+        return Array.from(map.values());
+      };
+      const clickElement = (target: HTMLElement) => {
+        const rect = target.getBoundingClientRect();
+        const clientX = rect.left + Math.min(Math.max(rect.width / 2, 8), rect.width - 4);
+        const clientY = rect.top + Math.min(Math.max(rect.height / 2, 8), rect.height - 4);
+        const eventInit = { bubbles: true, cancelable: true, composed: true, clientX, clientY, view: window };
+        target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+        target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+        target.dispatchEvent(new PointerEvent('pointerup', eventInit));
+        target.dispatchEvent(new MouseEvent('mouseup', eventInit));
+        target.dispatchEvent(new MouseEvent('click', eventInit));
+      };
+      const activateCommentInput = async (): Promise<boolean> => {
+        const commentInput = getCommentInput();
+        const placeholder = document.querySelector<HTMLElement>(
+          '#noteContainer .inner-when-not-active .inner, .note-container .inner-when-not-active .inner, .inner-when-not-active .inner, #noteContainer .inner-when-not-active, .note-container .inner-when-not-active, .inner-when-not-active',
+        );
+        const inputBox = commentInput?.closest<HTMLElement>('.input-box');
+        const contentEdit = commentInput?.closest<HTMLElement>('.content-edit');
+        const clickTargets = [inputBox ?? null, contentEdit ?? null, placeholder, commentInput].filter(isVisible);
+
+        if (clickTargets.length === 0 || !commentInput) {
+          return false;
+        }
+
+        const mentionIconVisible = () => isVisible(document.querySelector<HTMLElement>('#showMentionEl'));
+
+        for (const target of clickTargets) {
+          target.scrollIntoView({ block: 'center', behavior: 'auto' });
+          await delay(120);
+          clickElement(target);
+          await delay(120);
+          commentInput.focus();
+          commentInput.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+          commentInput.dispatchEvent(new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: ' ',
+          }));
+
+          if (!commentInput.textContent) {
+            commentInput.textContent = ' ';
+          }
+          commentInput.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            inputType: 'insertText',
+            data: ' ',
+          }));
+          commentInput.textContent = '';
+          commentInput.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            inputType: 'deleteContentBackward',
+            data: null,
+          }));
+
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            if (mentionIconVisible()) {
+              return true;
+            }
+            await delay(200);
+          }
+        }
+
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          if (mentionIconVisible()) {
+            return true;
+          }
+          await delay(200);
+        }
+
+        return false;
+      };
+      const triggerMentionByTypingAt = async (): Promise<boolean> => {
+        const commentInput = getCommentInput();
+        if (!commentInput) {
+          return false;
+        }
+
+        commentInput.scrollIntoView({ block: 'center', behavior: 'auto' });
+        await delay(120);
+        commentInput.focus();
+
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(commentInput);
+        range.collapse(false);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+
+        commentInput.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+        commentInput.dispatchEvent(new KeyboardEvent('keydown', {
+          key: '@',
+          code: 'Digit2',
+          bubbles: true,
+          cancelable: true,
+        }));
+        commentInput.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: '@',
+        }));
+
+        const inserted = document.execCommand?.('insertText', false, '@') ?? false;
+        if (!inserted) {
+          commentInput.textContent = '@';
+        }
+
+        commentInput.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertText',
+          data: '@',
+        }));
+        commentInput.dispatchEvent(new KeyboardEvent('keyup', {
+          key: '@',
+          code: 'Digit2',
+          bubbles: true,
+          cancelable: true,
+        }));
+
+        for (let attempt = 0; attempt < 18; attempt += 1) {
+          if (readCandidates().length > 0) {
+            return true;
+          }
+          await delay(250);
+        }
+
+        return false;
+      };
+      const findMentionButton = (): HTMLElement | null => {
+        const explicitMentionIcon = document.querySelector<HTMLElement>('#noteContainer #showMentionEl, .note-container #showMentionEl, #showMentionEl');
+        if (isVisible(explicitMentionIcon)) {
+          return explicitMentionIcon.closest<HTMLElement>('.icon, button, [role="button"], div') ?? explicitMentionIcon;
+        }
+
+        const candidates = Array.from(
+          document.querySelectorAll<HTMLElement>('button, [role="button"], span, div, svg'),
+        ).filter((element) => {
+          if (!isVisible(element)) {
+            return false;
+          }
+          const rect = element.getBoundingClientRect();
+          const text = normalizeText(element.innerText || element.textContent || '');
+          const label = normalizeText(element.getAttribute('aria-label') || element.getAttribute('title') || '');
+          const isMention =
+            text === '@' ||
+            label.includes('@') ||
+            label.includes('提及') ||
+            label.toLowerCase().includes('mention');
+          return isMention && rect.top > window.innerHeight * 0.55;
+        });
+
+        return (
+          candidates.sort((a, b) => {
+            const aRect = a.getBoundingClientRect();
+            const bRect = b.getBoundingClientRect();
+            return bRect.top - aRect.top || aRect.left - bRect.left;
+          })[0] ?? null
+        );
+      };
+      const triggerMentionList = async () => {
+        const commentInput = getCommentInput();
+        if (!commentInput) {
+          return false;
+        }
+        await activateCommentInput();
+
+        const mentionButton = findMentionButton();
+        if (!mentionButton) {
+          const typedAt = await triggerMentionByTypingAt();
+          if (!typedAt) {
+            return false;
+          }
+        } else {
+          clickElement(mentionButton);
+          await delay(800);
+        }
+
+        for (let attempt = 0; attempt < 16; attempt += 1) {
+          if (readCandidates().length > 0) {
+            return true;
+          }
+          await delay(250);
+        }
+        return false;
+      };
+
+      if (!hasDetailOverlay()) {
+        const trigger = findFirstNoteTrigger();
+        if (!trigger) {
+          return { success: false, message: '没有找到可打开的第一篇小红书笔记。', candidates: [] as PageMentionCandidate[] };
+        }
+        clickElement(trigger);
+        for (let attempt = 0; attempt < 20 && !hasDetailOverlay(); attempt += 1) {
+          await delay(250);
+        }
+      }
+      if (!hasDetailOverlay()) {
+        return { success: false, message: '点击第一篇笔记后没有检测到笔记弹窗。', candidates: [] as PageMentionCandidate[] };
+      }
+      const opened = await triggerMentionList();
+      if (!opened) {
+        return { success: false, message: '没有读取到 @ 候选名单。', candidates: [] as PageMentionCandidate[] };
+      }
+      return { success: true, message: '', candidates: readCandidates() };
+    },
+  });
+
+  const payload = results[0]?.result;
+  if (!payload) {
+    throw new Error('@ 名单采集没有返回结果，请刷新页面后重试。');
+  }
+  if (!payload.success) {
+    throw new Error(payload.message);
+  }
+  return payload.candidates;
+}
+
+async function resolveMentionCandidateBySearch(candidate: MentionCandidate, windowId?: number): Promise<MentionSearchResolveResult> {
+  let createdTabId: number | null = null;
+  let keepCreatedTab = false;
+  const searchUrl = `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(candidate.nickname)}&source=web_search_result_notes`;
+
+  try {
+    const tab = await chrome.tabs.create({
+      url: searchUrl,
+      active: true,
+      windowId,
+    });
+    createdTabId = tab.id ?? null;
+    if (!createdTabId) {
+      return { author: null, reason: '创建搜索标签页失败。' };
+    }
+    await waitForTabComplete(createdTabId, 18000);
+    await delay(1200);
+
+    const results = await chrome.scripting.executeScript({
+      target: { tabId: createdTabId },
+      world: 'MAIN',
+      func: async (nextCandidate: { nickname: string; avatar_url?: string }) => {
+        type PageResult = {
+          author: PageAuthor | null;
+          reason: string;
+          verificationDetected?: boolean;
+        };
+        type PageAuthor = {
+          user_id: string;
+          nickname: string;
+          profile_url: string;
+          tags: string[];
+          followed: boolean;
+          avatar_url?: string;
+          note?: string;
+        };
+        type SearchUserPayload = {
+          data?: {
+            users?: Array<{
+              id?: string;
+              name?: string;
+              image?: string;
+              followed?: boolean;
+              xsec_token?: string;
+            }>;
+          };
+        };
+        const delay = (ms: number) =>
+          new Promise<void>((resolve) => {
+            window.setTimeout(resolve, ms);
+          });
+        const isVisible = (element: Element | null): element is HTMLElement => {
+          if (!(element instanceof HTMLElement)) {
+            return false;
+          }
+          const rect = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return rect.width > 8 && rect.height > 8 && style.visibility !== 'hidden' && style.display !== 'none';
+        };
+        const normalizeText = (text: string) => text.replace(/\s+/g, ' ').trim();
+        const detectVerificationReason = (): string | null => {
+          const pageText = normalizeText(document.body?.innerText || '');
+          const keywords = [
+            '安全验证',
+            '验证码',
+            '请完成验证',
+            '完成验证后继续',
+            '异常访问',
+            '访问异常',
+            '滑块',
+            '拖动滑块',
+            '风险校验',
+          ];
+          const matchedKeyword = keywords.find((keyword) => pageText.includes(keyword));
+          if (matchedKeyword) {
+            return `检测到小红书验证页信号：${matchedKeyword}。`;
+          }
+          const url = `${window.location.pathname}${window.location.search}`;
+          if (/captcha|verify|verification|risk/i.test(url)) {
+            return '检测到验证页 URL。';
+          }
+          return null;
+        };
+        const normalizeAvatar = (url?: string) => {
+          if (!url) {
+            return '';
+          }
+          try {
+            const parsed = new URL(url, window.location.origin);
+            parsed.search = '';
+            return parsed.toString().replace(/^http:/, 'https:');
+          } catch {
+            return url.split('?')[0]?.replace(/^http:/, 'https:') ?? url;
+          }
+        };
+        const buildProfileUrl = (userId: string, xsecToken?: string) => {
+          const url = new URL(`/user/profile/${userId}`, window.location.origin);
+          if (xsecToken) {
+            url.searchParams.set('xsec_token', xsecToken);
+            url.searchParams.set('xsec_source', 'pc_search');
+          }
+          return url.toString();
+        };
+        const responseStoreKey = '__codexMentionUserSearchResponses__';
+        const responseFlagKey = '__codexMentionUserSearchHooked__';
+        const installSearchResponseHook = () => {
+          const scopedWindow = window as typeof window & Record<string, unknown>;
+          if (scopedWindow[responseFlagKey]) {
+            return;
+          }
+          scopedWindow[responseFlagKey] = true;
+          scopedWindow[responseStoreKey] = [];
+
+          const pushPayload = (payload: unknown) => {
+            if (!payload || typeof payload !== 'object') {
+              return;
+            }
+            const currentStore = scopedWindow[responseStoreKey];
+            if (!Array.isArray(currentStore)) {
+              scopedWindow[responseStoreKey] = [payload];
+              return;
+            }
+            currentStore.push(payload);
+            if (currentStore.length > 8) {
+              currentStore.splice(0, currentStore.length - 8);
+            }
+          };
+
+          const originalFetch = window.fetch.bind(window);
+          window.fetch = async (...args) => {
+            const response = await originalFetch(...args);
+            try {
+              const input = args[0];
+              const url =
+                typeof input === 'string'
+                  ? input
+                  : input instanceof Request
+                    ? input.url
+                    : String(input);
+              if (url.includes('/api/sns/web/v1/search/usersearch')) {
+                response
+                  .clone()
+                  .json()
+                  .then(pushPayload)
+                  .catch(() => undefined);
+              }
+            } catch {
+              // Ignore hook failures.
+            }
+            return response;
+          };
+
+          const originalOpen = XMLHttpRequest.prototype.open;
+          const originalSend = XMLHttpRequest.prototype.send;
+          XMLHttpRequest.prototype.open = function patchedOpen(method: string, url: string | URL, ...rest: unknown[]) {
+            Object.defineProperty(this, '__codexUrl', {
+              value: String(url),
+              configurable: true,
+              enumerable: false,
+              writable: true,
+            });
+            return originalOpen.apply(this, [method, url, ...rest] as Parameters<typeof XMLHttpRequest.prototype.open>);
+          };
+          XMLHttpRequest.prototype.send = function patchedSend(...args: unknown[]) {
+            this.addEventListener('load', function onLoad() {
+              try {
+                const requestUrl = String((this as XMLHttpRequest & { __codexUrl?: string }).__codexUrl || '');
+                if (!requestUrl.includes('/api/sns/web/v1/search/usersearch')) {
+                  return;
+                }
+                if (typeof this.responseText !== 'string' || !this.responseText) {
+                  return;
+                }
+                pushPayload(JSON.parse(this.responseText));
+              } catch {
+                // Ignore hook failures.
+              }
+            });
+            return originalSend.apply(this, args as Parameters<typeof XMLHttpRequest.prototype.send>);
+          };
+        };
+        const clearStoredPayloads = () => {
+          const scopedWindow = window as typeof window & Record<string, unknown>;
+          scopedWindow[responseStoreKey] = [];
+        };
+        const dispatchClick = (target: HTMLElement) => {
+          const rect = target.getBoundingClientRect();
+          const clientX = rect.left + Math.min(Math.max(rect.width / 2, 8), rect.width - 4);
+          const clientY = rect.top + Math.min(Math.max(rect.height / 2, 8), rect.height - 4);
+          const eventInit = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX,
+            clientY,
+            view: window,
+          };
+
+          target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+          target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+          target.dispatchEvent(new PointerEvent('pointerup', eventInit));
+          target.dispatchEvent(new MouseEvent('mouseup', eventInit));
+          target.dispatchEvent(new MouseEvent('click', eventInit));
+          target.click();
+        };
+        const findUserTab = (): HTMLElement | null => {
+          const preciseSelectors = [
+            '.content-container #user.channel',
+            '#user.channel',
+            '.content-container .channel#user',
+            '[data-hp-container-rel] #user.channel',
+          ];
+
+          for (const selector of preciseSelectors) {
+            const matched = document.querySelector<HTMLElement>(selector);
+            if (isVisible(matched)) {
+              return matched;
+            }
+          }
+
+          return null;
+        };
+        const triggerUserTabSearch = async (): Promise<PageResult> => {
+          clearStoredPayloads();
+          for (let attempt = 0; attempt < 12; attempt += 1) {
+            const verificationReason = detectVerificationReason();
+            if (verificationReason) {
+              return { author: null, reason: verificationReason, verificationDetected: true };
+            }
+            const userTab = findUserTab();
+            if (userTab) {
+              dispatchClick(userTab);
+            }
+
+            for (let waitRound = 0; waitRound < 4; waitRound += 1) {
+              const waitingVerificationReason = detectVerificationReason();
+              if (waitingVerificationReason) {
+                return { author: null, reason: waitingVerificationReason, verificationDetected: true };
+              }
+              const payloadMatch = readPayloadMatch();
+              if (payloadMatch.author) {
+                return payloadMatch;
+              }
+              await delay(250);
+            }
+          }
+          return {
+            author: null,
+            reason: findUserTab() ? '已找到用户 tab，但未捕获到 usersearch 响应。' : '未找到用户 tab。',
+          };
+        };
+        const readPayloadMatch = (): PageResult => {
+          const scopedWindow = window as typeof window & Record<string, unknown>;
+          const payloads = scopedWindow[responseStoreKey];
+          if (!Array.isArray(payloads)) {
+            return { author: null, reason: '尚未捕获到任何 usersearch 响应。' };
+          }
+          const candidateAvatar = normalizeAvatar(nextCandidate.avatar_url);
+          let inspectedUsers = 0;
+          let sameNameUsers = 0;
+          let followedSameNameUsers = 0;
+          for (let payloadIndex = payloads.length - 1; payloadIndex >= 0; payloadIndex -= 1) {
+            const payload = payloads[payloadIndex] as SearchUserPayload;
+            const users = payload?.data?.users;
+            if (!Array.isArray(users)) {
+              continue;
+            }
+            for (const user of users) {
+              inspectedUsers += 1;
+              const userId = user.id?.trim();
+              const nickname = user.name?.trim();
+              if (!userId || !nickname) {
+                continue;
+              }
+              if (nickname === nextCandidate.nickname) {
+                sameNameUsers += 1;
+              }
+              if (!user.followed) {
+                continue;
+              }
+              if (nickname === nextCandidate.nickname) {
+                followedSameNameUsers += 1;
+              }
+              const avatarMatches = !candidateAvatar || normalizeAvatar(user.image) === candidateAvatar;
+              if (nickname !== nextCandidate.nickname || !avatarMatches) {
+                continue;
+              }
+              return {
+                author: {
+                  user_id: userId,
+                  nickname,
+                  profile_url: buildProfileUrl(userId, user.xsec_token),
+                  tags: [],
+                  followed: true,
+                  avatar_url: user.image || nextCandidate.avatar_url,
+                  note: '',
+                },
+                reason: `usersearch 响应成功，命中已关注用户 ${userId}。`,
+                verificationDetected: false,
+              };
+            }
+          }
+          if (payloads.length === 0) {
+            return { author: null, reason: '已点击用户 tab，但响应列表为空。' };
+          }
+          if (inspectedUsers === 0) {
+            return { author: null, reason: 'usersearch 已返回，但 users 为空。' };
+          }
+          if (sameNameUsers === 0) {
+            return { author: null, reason: `usersearch 已返回 ${inspectedUsers} 个结果，但没有同名用户。` };
+          }
+          if (followedSameNameUsers === 0) {
+            return { author: null, reason: `找到了 ${sameNameUsers} 个同名用户，但都不是已关注。` };
+          }
+          return { author: null, reason: `找到了 ${followedSameNameUsers} 个已关注同名用户，但头像未匹配。` };
+        };
+        installSearchResponseHook();
+        const userTabResult = await triggerUserTabSearch();
+        if (userTabResult.author || userTabResult.verificationDetected) {
+          return userTabResult;
+        }
+        if (userTabResult.reason) {
+          return userTabResult;
+        }
+        for (let attempt = 0; attempt < 8; attempt += 1) {
+          const verificationReason = detectVerificationReason();
+          if (verificationReason) {
+            return { author: null, reason: verificationReason, verificationDetected: true };
+          }
+          const payloadMatch = readPayloadMatch();
+          if (payloadMatch.author) {
+            return payloadMatch;
+          }
+          await delay(250);
+        }
+        return readPayloadMatch();
+      },
+      args: [candidate],
+    });
+
+    const resolved = results[0]?.result ?? { author: null, reason: '搜索页脚本没有返回结果。' };
+    keepCreatedTab = Boolean(resolved.verificationDetected);
+    return resolved;
+  } catch (error) {
+    return {
+      author: null,
+      reason: error instanceof Error ? error.message : '搜索页解析抛出了未知异常。',
+    };
+  } finally {
+    if (createdTabId && !keepCreatedTab) {
+      try {
+        await chrome.tabs.remove(createdTabId);
+      } catch {
+        // Ignore close failures.
+      }
+    }
+  }
+}
+
+async function scanMentionableAuthorsInActivePage(): Promise<Author[]> {
+  const tab = await getActiveTab();
+  if (!tab.id) {
+    throw new Error('未找到当前标签页。');
+  }
+
+  if (!tab.url?.includes(XHS_HOST)) {
+    throw new Error('请先切换到小红书首页或笔记页面后再采集 @ 名单。');
+  }
+
+  const results = await chrome.scripting.executeScript({
+    target: { tabId: tab.id },
+    func: async (expectedHost: string) => {
+      type MentionAuthor = {
+        user_id: string;
+        nickname: string;
+        profile_url: string;
+        tags: string[];
+        followed: boolean;
+        avatar_url?: string;
+        note: string;
+      };
+      type SearchUser = {
+        id?: string;
+        name?: string;
+        image?: string;
+        followed?: boolean;
+        xsec_token?: string;
+      };
+
+      const delay = (ms: number) =>
+        new Promise<void>((resolve) => {
+          window.setTimeout(resolve, ms);
+        });
+
+      const isVisible = (element: Element | null): element is HTMLElement => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        const rect = element.getBoundingClientRect();
+        const style = window.getComputedStyle(element);
+        return rect.width > 8 && rect.height > 8 && style.visibility !== 'hidden' && style.display !== 'none';
+      };
+
+      const normalizeText = (text: string) => text.replace(/\s+/g, ' ').trim();
+
+      const normalizeAvatarUrl = (url: string | undefined) => {
+        if (!url) {
+          return '';
+        }
+        try {
+          const parsed = new URL(url, window.location.origin);
+          parsed.search = '';
+          return parsed.toString().replace(/^http:/, 'https:');
+        } catch {
+          return url.split('?')[0]?.replace(/^http:/, 'https:') ?? url;
+        }
+      };
+
+      const createSearchId = () =>
+        Math.random().toString(36).slice(2, 12) + Math.random().toString(36).slice(2, 12);
+
+      const createRequestId = () => `${Math.floor(Math.random() * 1_000_000_000)}-${Date.now()}`;
+
+      const normalizeProfileUrl = (rawUrl: string): string | null => {
+        try {
+          const url = new URL(rawUrl, window.location.origin);
+          if (url.host !== expectedHost || !url.pathname.includes('/user/profile/')) {
+            return null;
+          }
+          url.search = '';
+          url.hash = '';
+          return url.toString();
+        } catch {
+          return null;
+        }
+      };
+
+      const extractUserId = (profileUrl: string): string | null => {
+        const segments = new URL(profileUrl).pathname.split('/').filter(Boolean);
+        return segments.length > 0 ? segments[segments.length - 1] : null;
+      };
+
+      const getProfileIdsInDom = () => {
+        const ids = new Set<string>();
+        for (const anchor of Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/user/profile/"]'))) {
+          const profileUrl = normalizeProfileUrl(anchor.href);
+          if (!profileUrl) {
+            continue;
+          }
+          const userId = extractUserId(profileUrl);
+          if (userId) {
+            ids.add(userId);
+          }
+        }
+        return ids;
+      };
+
+      const findFirstNoteTrigger = (): HTMLElement | null => {
+        const directAnchors = Array.from(
+          document.querySelectorAll<HTMLAnchorElement>(
+            'a.cover[href^="/explore/"], a[href^="/explore/"], a[href*="/discovery/item/"]',
+          ),
+        ).filter((anchor) => {
+          if (!isVisible(anchor)) {
+            return false;
+          }
+          const href = anchor.getAttribute('href') ?? '';
+          return !href.includes('/user/profile/');
+        });
+
+        if (directAnchors.length > 0) {
+          return directAnchors.sort((a, b) => {
+            const aRect = a.getBoundingClientRect();
+            const bRect = b.getBoundingClientRect();
+            return aRect.top - bRect.top || aRect.left - bRect.left;
+          })[0];
+        }
+
+        return (
+          Array.from(
+            document.querySelectorAll<HTMLElement>(
+              '[class*="note-item"], [class*="feeds-page"] section, section[class*="note"], article',
+            ),
+          )
+            .filter(isVisible)
+            .sort((a, b) => {
+              const aRect = a.getBoundingClientRect();
+              const bRect = b.getBoundingClientRect();
+              return aRect.top - bRect.top || aRect.left - bRect.left;
+            })[0] ?? null
+        );
+      };
+
+      const hasDetailOverlay = () => {
+        const noteContainer = document.querySelector<HTMLElement>('#noteContainer, .note-container');
+        const commentInput = document.querySelector<HTMLElement>('#content-textarea[contenteditable="true"]');
+        return Boolean(isVisible(noteContainer) && isVisible(commentInput));
+      };
+
+      const activateCommentInput = async (): Promise<boolean> => {
+        const commentInput = document.querySelector<HTMLElement>(
+          '#noteContainer #content-textarea[contenteditable="true"], .note-container #content-textarea[contenteditable="true"], #content-textarea[contenteditable="true"]',
+        );
+        const placeholder = document.querySelector<HTMLElement>(
+          '#noteContainer .inner-when-not-active .inner, .note-container .inner-when-not-active .inner, .inner-when-not-active .inner, #noteContainer .inner-when-not-active, .note-container .inner-when-not-active, .inner-when-not-active',
+        );
+        const inputBox = commentInput?.closest<HTMLElement>('.input-box');
+        const contentEdit = commentInput?.closest<HTMLElement>('.content-edit');
+        const clickTargets = [inputBox ?? null, contentEdit ?? null, placeholder, commentInput].filter(isVisible);
+
+        if (clickTargets.length === 0 || !commentInput) {
+          return false;
+        }
+
+        const dispatchPointerSequence = (target: HTMLElement) => {
+          const rect = target.getBoundingClientRect();
+          const clientX = rect.left + Math.min(Math.max(rect.width / 2, 8), rect.width - 4);
+          const clientY = rect.top + Math.min(Math.max(rect.height / 2, 8), rect.height - 4);
+          const eventInit = {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            clientX,
+            clientY,
+            view: window,
+          };
+
+          target.dispatchEvent(new PointerEvent('pointerdown', eventInit));
+          target.dispatchEvent(new MouseEvent('mousedown', eventInit));
+          target.dispatchEvent(new PointerEvent('pointerup', eventInit));
+          target.dispatchEvent(new MouseEvent('mouseup', eventInit));
+          target.dispatchEvent(new MouseEvent('click', eventInit));
+        };
+
+        const mentionIconVisible = () => isVisible(document.querySelector<HTMLElement>('#showMentionEl'));
+
+        for (const target of clickTargets) {
+          target.scrollIntoView({ block: 'center', behavior: 'auto' });
+          await delay(120);
+          dispatchPointerSequence(target);
+          await delay(120);
+          commentInput.focus();
+          commentInput.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+          commentInput.dispatchEvent(new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            inputType: 'insertText',
+            data: ' ',
+          }));
+
+          if (!commentInput.textContent) {
+            commentInput.textContent = ' ';
+          }
+          commentInput.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            inputType: 'insertText',
+            data: ' ',
+          }));
+          commentInput.textContent = '';
+          commentInput.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            inputType: 'deleteContentBackward',
+            data: null,
+          }));
+
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            if (mentionIconVisible()) {
+              return true;
+            }
+            await delay(200);
+          }
+        }
+
+        for (let attempt = 0; attempt < 12; attempt += 1) {
+          if (mentionIconVisible()) {
+            return true;
+          }
+          await delay(200);
+        }
+
+        return false;
+      };
+
+      if (!hasDetailOverlay()) {
+        const trigger = findFirstNoteTrigger();
+        if (!trigger) {
+          return {
+            success: false,
+            message: '没有找到可打开的第一篇小红书笔记，请确认当前在首页信息流或笔记列表页。',
+            authors: [] as MentionAuthor[],
+          };
+        }
+        trigger.click();
+        for (let attempt = 0; attempt < 20 && !hasDetailOverlay(); attempt += 1) {
+          await delay(250);
+        }
+      }
+
+      if (!hasDetailOverlay()) {
+        return {
+          success: false,
+          message: '点击第一篇笔记后没有检测到笔记弹窗，请确认当前在小红书首页信息流，且第一篇笔记可以正常打开。',
+          authors: [] as MentionAuthor[],
+        };
+      }
+
+      await activateCommentInput();
+
+      const beforeIds = getProfileIdsInDom();
+
+      const hasNewProfileCandidates = () =>
+        Array.from(document.querySelectorAll<HTMLElement>('#mentionList.active li, #mentionList li'))
+          .some(isVisible);
+
+      const triggerMentionByTypingAt = async (): Promise<boolean> => {
+        const commentInput = document.querySelector<HTMLElement>(
+          '#noteContainer #content-textarea[contenteditable="true"], .note-container #content-textarea[contenteditable="true"], #content-textarea[contenteditable="true"]',
+        );
+        if (!commentInput) {
+          return false;
+        }
+
+        commentInput.scrollIntoView({ block: 'center', behavior: 'auto' });
+        await delay(120);
+        commentInput.focus();
+
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(commentInput);
+        range.collapse(false);
+        selection?.removeAllRanges();
+        selection?.addRange(range);
+
+        commentInput.dispatchEvent(new FocusEvent('focus', { bubbles: true }));
+        commentInput.dispatchEvent(new KeyboardEvent('keydown', {
+          key: '@',
+          code: 'Digit2',
+          bubbles: true,
+          cancelable: true,
+        }));
+        commentInput.dispatchEvent(new InputEvent('beforeinput', {
+          bubbles: true,
+          cancelable: true,
+          inputType: 'insertText',
+          data: '@',
+        }));
+
+        const inserted = document.execCommand?.('insertText', false, '@') ?? false;
+        if (!inserted) {
+          commentInput.textContent = '@';
+        }
+
+        commentInput.dispatchEvent(new InputEvent('input', {
+          bubbles: true,
+          inputType: 'insertText',
+          data: '@',
+        }));
+        commentInput.dispatchEvent(new KeyboardEvent('keyup', {
+          key: '@',
+          code: 'Digit2',
+          bubbles: true,
+          cancelable: true,
+        }));
+
+        for (let attempt = 0; attempt < 18; attempt += 1) {
+          if (hasNewProfileCandidates()) {
+            return true;
+          }
+          await delay(250);
+        }
+
+        return false;
+      };
+
+      const findMentionButton = (): HTMLElement | null => {
+        const explicitMentionIcon = document.querySelector<HTMLElement>('#noteContainer #showMentionEl, .note-container #showMentionEl, #showMentionEl');
+        if (isVisible(explicitMentionIcon)) {
+          return explicitMentionIcon.closest<HTMLElement>('.icon, button, [role="button"], div') ?? explicitMentionIcon;
+        }
+
+        const candidates = Array.from(
+          document.querySelectorAll<HTMLElement>('button, [role="button"], span, div, svg'),
+        ).filter((element) => {
+          if (!isVisible(element)) {
+            return false;
+          }
+          const rect = element.getBoundingClientRect();
+          const text = normalizeText(element.innerText || element.textContent || '');
+          const label = normalizeText(element.getAttribute('aria-label') || element.getAttribute('title') || '');
+          const isMention =
+            text === '@' ||
+            label.includes('@') ||
+            label.includes('提及') ||
+            label.toLowerCase().includes('mention');
+          return isMention && rect.top > window.innerHeight * 0.55;
+        });
+
+        return (
+          candidates.sort((a, b) => {
+            const aRect = a.getBoundingClientRect();
+            const bRect = b.getBoundingClientRect();
+            return bRect.top - aRect.top || aRect.left - bRect.left;
+          })[0] ?? null
+        );
+      };
+
+      const mentionButton = findMentionButton();
+      if (!mentionButton) {
+        const typedAt = await triggerMentionByTypingAt();
+        if (!typedAt) {
+          return {
+            success: false,
+            message: '已打开笔记，但没有读取到 @ 候选名单。请确认当前账号已登录且评论输入区可用。',
+            authors: [] as MentionAuthor[],
+          };
+        }
+      } else {
+        mentionButton.click();
+        await delay(800);
+      }
+
+      const findCandidateScrollTarget = (): HTMLElement | null => {
+        const mentionItems = Array.from(document.querySelectorAll<HTMLElement>('#mentionList.active li, #mentionList li'))
+          .filter(isVisible);
+        if (mentionItems.length > 0) {
+          const mentionList = document.querySelector<HTMLElement>('#mentionList .mention-container-new, #mentionList ul, #mentionList');
+          if (mentionList) {
+            return mentionList;
+          }
+        }
+
+        const newAnchors = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/user/profile/"]'))
+          .filter(isVisible)
+          .filter((anchor) => {
+            const profileUrl = normalizeProfileUrl(anchor.href);
+            const userId = profileUrl ? extractUserId(profileUrl) : null;
+            return Boolean(userId && !beforeIds.has(userId));
+          });
+
+        const scored = new Map<HTMLElement, number>();
+        for (const anchor of newAnchors) {
+          let current = anchor.parentElement;
+          while (current && current !== document.body) {
+            const style = window.getComputedStyle(current);
+            const canScroll =
+              (style.overflowY === 'auto' || style.overflowY === 'scroll' || style.overflowY === 'overlay') &&
+              current.scrollHeight > current.clientHeight + 24;
+            if (canScroll) {
+              scored.set(current, (scored.get(current) ?? 0) + 1);
+            }
+            current = current.parentElement;
+          }
+        }
+
+        return Array.from(scored.entries()).sort((a, b) => b[1] - a[1])[0]?.[0] ?? null;
+      };
+
+      const searchMentionUser = async (candidate: {
+        nickname: string;
+        avatarUrl?: string;
+      }): Promise<MentionAuthor | null> => {
+        try {
+          const response = await fetch('https://edith.xiaohongshu.com/api/sns/web/v1/search/usersearch?xsecappid=xhs-pc-web', {
+            method: 'POST',
+            credentials: 'include',
+            headers: {
+              accept: 'application/json, text/plain, */*',
+              'accept-language': navigator.language || 'zh-CN',
+              'content-type': 'application/json;charset=UTF-8',
+              'x-s': '',
+              'x-t': `${Date.now()}`,
+            },
+            mode: 'cors',
+            body: JSON.stringify({
+              keyword: candidate.nickname,
+              search_id: createSearchId(),
+              page: 1,
+              page_size: 15,
+              biz_type: 'web_search_user',
+              request_id: createRequestId(),
+            }),
+          });
+
+          if (!response.ok) {
+            return null;
+          }
+
+          const payload = await response.json() as {
+            data?: {
+              users?: SearchUser[];
+            };
+          };
+          const users = payload.data?.users ?? [];
+          const normalizedCandidateAvatar = normalizeAvatarUrl(candidate.avatarUrl);
+          const matched = users.find((user) => {
+            if (!user.id || !user.followed) {
+              return false;
+            }
+            const nameMatches = normalizeText(user.name ?? '') === candidate.nickname;
+            const avatarMatches =
+              normalizedCandidateAvatar &&
+              normalizeAvatarUrl(user.image) === normalizedCandidateAvatar;
+            return nameMatches && avatarMatches;
+          });
+
+          if (!matched?.id) {
+            return null;
+          }
+
+          return {
+            user_id: matched.id,
+            nickname: matched.name || candidate.nickname,
+            profile_url: `https://www.xiaohongshu.com/user/profile/${matched.id}`,
+            tags: [],
+            followed: true,
+            avatar_url: matched.image || candidate.avatarUrl,
+            note: '',
+          };
+        } catch {
+          return null;
+        }
+      };
+
+      const readMentionAuthors = async (): Promise<MentionAuthor[]> => {
+        const authorMap = new Map<string, MentionAuthor>();
+        const mentionItems = Array.from(document.querySelectorAll<HTMLElement>('#mentionList.active li, #mentionList li'))
+          .filter(isVisible);
+
+        const mentionCandidates: Array<{
+          nickname: string;
+          avatarUrl?: string;
+        }> = [];
+
+        for (const item of mentionItems) {
+          const nickname = normalizeText(item.querySelector<HTMLElement>('.name')?.innerText || item.innerText || '');
+          const avatarUrl = item.querySelector<HTMLImageElement>('img')?.src || undefined;
+          if (!nickname) {
+            continue;
+          }
+
+          mentionCandidates.push({ nickname, avatarUrl });
+        }
+
+        for (const candidate of mentionCandidates) {
+          const matchedAuthor = await searchMentionUser(candidate);
+          if (matchedAuthor) {
+            authorMap.set(matchedAuthor.user_id, matchedAuthor);
+          }
+        }
+
+        const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/user/profile/"]'));
+
+        for (const anchor of anchors) {
+          const profileUrl = normalizeProfileUrl(anchor.href);
+          if (!profileUrl || !isVisible(anchor)) {
+            continue;
+          }
+          const userId = extractUserId(profileUrl);
+          if (!userId || beforeIds.has(userId)) {
+            continue;
+          }
+
+          const item = anchor.closest<HTMLElement>(
+            'li, [role="option"], [class*="mention"], [class*="user"], [class*="list"], [class*="item"], div',
+          );
+          const rawText = normalizeText(
+            anchor.getAttribute('title') ||
+              anchor.getAttribute('aria-label') ||
+              anchor.innerText ||
+              item?.innerText ||
+              '',
+          );
+          const nickname = rawText
+            .split(/\n|关注|粉丝|@/)
+            .map(normalizeText)
+            .find(Boolean);
+
+          if (!nickname || nickname.startsWith('http')) {
+            continue;
+          }
+
+          const avatarUrl =
+            item?.querySelector<HTMLImageElement>('img')?.src ||
+            anchor.querySelector<HTMLImageElement>('img')?.src ||
+            undefined;
+
+          authorMap.set(userId, {
+            user_id: userId,
+            nickname,
+            profile_url: profileUrl,
+            tags: [],
+            followed: true,
+            avatar_url: avatarUrl,
+            note: '',
+          });
+        }
+
+        return Array.from(authorMap.values());
+      };
+
+      let authors = await readMentionAuthors();
+      let previousCount = authors.length;
+      let scrollTarget = findCandidateScrollTarget();
+
+      for (let round = 0; round < 18; round += 1) {
+        if (!scrollTarget) {
+          scrollTarget = findCandidateScrollTarget();
+        }
+
+        if (scrollTarget) {
+          scrollTarget.scrollTop += Math.max(scrollTarget.clientHeight * 0.85, 260);
+        } else {
+          window.scrollBy({ top: 240, behavior: 'auto' });
+        }
+
+        await delay(450);
+        authors = await readMentionAuthors();
+        if (authors.length <= previousCount) {
+          if (round >= 4) {
+            break;
+          }
+        } else {
+          previousCount = authors.length;
+        }
+      }
+
+      const resolvedAuthors = authors.filter((author) => (
+        Boolean(author.profile_url) && !author.user_id.startsWith('mention:')
+      ));
+
+      return {
+        success: true,
+        message: '',
+        authors: resolvedAuthors,
+      };
+    },
+    args: [XHS_HOST],
+  });
+
+  const payload = results[0]?.result;
+  if (!payload) {
+    throw new Error('@ 名单采集没有返回结果，请刷新页面后重试。');
+  }
+
+  if (!payload.success) {
+    throw new Error(payload.message);
+  }
+
+  return payload.authors;
+}
+
 async function stopScanInActivePage(sessionId: string): Promise<void> {
   const tab = await getActiveTab();
   if (!tab.id) {
@@ -1856,6 +3108,7 @@ export function PopupApp() {
   const [activityLogs, setActivityLogs] = useState<string[]>([]);
   const [statusText, setStatusText] = useState('打开小红书搜索结果页，并勾选“已关注”筛选后开始扫描。');
   const [statusTone, setStatusTone] = useState<StatusTone>('idle');
+  const [pausedMentionScan, setPausedMentionScan] = useState<PausedMentionScanState | null>(null);
   const secondaryCollectStopRequestedRef = useRef(false);
 
   useEffect(() => {
@@ -1929,6 +3182,50 @@ export function PopupApp() {
 
   function pushLog(message: string) {
     setActivityLogs((current) => [message, ...current].slice(0, 14));
+  }
+
+  async function runMentionScan(
+    candidates: MentionCandidate[],
+    windowId: number | undefined,
+    startIndex = 0,
+    initialAuthors: Author[] = [],
+    initialFailures: MentionScanFailure[] = [],
+  ) {
+    const mentionAuthors = [...initialAuthors];
+    const failures = [...initialFailures];
+
+    for (let index = startIndex; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      setStatusText(`正在通过小红书用户搜索解析 @ 候选 ${index + 1}/${candidates.length}：${candidate.nickname}`);
+      pushLog(`@名单采集：开始解析 ${index + 1}/${candidates.length} -> ${candidate.nickname}。`);
+      const result = await resolveMentionCandidateBySearch(candidate, windowId);
+      if (result.author) {
+        mentionAuthors.push(result.author);
+        pushLog(`@名单采集：已命中 ${candidate.nickname} -> ${result.author.user_id}。${result.reason}`);
+      } else if (result.verificationDetected) {
+        setPausedMentionScan({
+          candidates,
+          nextIndex: index,
+          collectedAuthors: mentionAuthors,
+          failures,
+          windowId,
+        });
+        setStatusTone('info');
+        setStatusText('检测到小红书安全验证，已暂停 @名单采集。请先在当前页面完成验证，再点击“继续@名单采集”。');
+        pushLog(`@名单采集：在 ${candidate.nickname} 处因验证暂停。原因：${result.reason}`);
+        if (failures.length > 0) {
+          pushLog(`@名单采集：当前累计失败名单 -> ${failures.map((item) => `${item.nickname}（${item.reason}）`).join('；')}`);
+        }
+        return { paused: true, mentionAuthors, failures };
+      } else {
+        failures.push({ nickname: candidate.nickname, reason: result.reason });
+        pushLog(`@名单采集：未命中 ${candidate.nickname}。原因：${result.reason}`);
+      }
+      await delay(300);
+    }
+
+    setPausedMentionScan(null);
+    return { paused: false, mentionAuthors, failures };
   }
 
   function getTagScoreDetails(author: Author) {
@@ -2121,6 +3418,90 @@ export function PopupApp() {
       setStatusText(error instanceof Error ? error.message : '扫描失败，请稍后重试。');
     } finally {
       setActiveScanSessionId(null);
+      setLoading(false);
+    }
+  }
+
+  async function handleMentionScanClick() {
+    setLoading(true);
+    setPausedMentionScan(null);
+    setStatusTone('info');
+    setStatusText('正在打开第一篇笔记并读取评论区 @ 候选名单，请暂时不要操作当前小红书页面...');
+    pushLog('@名单采集开始：准备打开第一篇笔记并读取评论区候选名单。');
+
+    try {
+      const activeTab = await getActiveTab();
+      const candidates = await collectMentionCandidatesInActivePage();
+      if (candidates.length === 0) {
+        throw new Error('这次没有从评论区 @ 弹窗里读取到候选用户。');
+      }
+      pushLog(`@名单采集：已读取候选 ${candidates.length}。`);
+
+      const { paused, mentionAuthors, failures } = await runMentionScan(candidates, activeTab.windowId);
+      if (paused) {
+        return;
+      }
+
+      if (mentionAuthors.length === 0) {
+        throw new Error(`读取到 @ 候选 ${candidates.length} 个，但没有在用户搜索页匹配到已关注用户。`);
+      }
+
+      const response = await storage.upsertAuthors(mentionAuthors);
+      await refreshData();
+      pushLog(`@名单采集：候选 ${candidates.length}，解析 ${mentionAuthors.length}，新增 ${response.added}，合并 ${response.merged}。`);
+      if (failures.length > 0) {
+        pushLog(`@名单采集：最终解析失败名单 -> ${failures.map((item) => `${item.nickname}（${item.reason}）`).join('；')}`);
+      }
+      setStatusTone('success');
+      setStatusText(`@名单采集完成，候选 ${candidates.length}，解析已关注用户 ${mentionAuthors.length}，新增 ${response.added}，合并 ${response.merged}。`);
+    } catch (error) {
+      setStatusTone('error');
+      setStatusText(error instanceof Error ? error.message : '@ 名单采集失败，请稍后重试。');
+      pushLog(`@名单采集失败：${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResumeMentionScan() {
+    if (!pausedMentionScan) {
+      return;
+    }
+
+    setLoading(true);
+    setStatusTone('info');
+    setStatusText('正在继续 @名单采集，请先在当前搜索页完成验证后等待继续执行...');
+    pushLog(`@名单采集继续：从 ${pausedMentionScan.nextIndex + 1}/${pausedMentionScan.candidates.length} 继续。`);
+
+    try {
+      const { paused, mentionAuthors, failures } = await runMentionScan(
+        pausedMentionScan.candidates,
+        pausedMentionScan.windowId,
+        pausedMentionScan.nextIndex,
+        pausedMentionScan.collectedAuthors,
+        pausedMentionScan.failures,
+      );
+      if (paused) {
+        return;
+      }
+
+      if (mentionAuthors.length === 0) {
+        throw new Error(`读取到 @ 候选 ${pausedMentionScan.candidates.length} 个，但没有在用户搜索页匹配到已关注用户。`);
+      }
+
+      const response = await storage.upsertAuthors(mentionAuthors);
+      await refreshData();
+      pushLog(`@名单采集：候选 ${pausedMentionScan.candidates.length}，解析 ${mentionAuthors.length}，新增 ${response.added}，合并 ${response.merged}。`);
+      if (failures.length > 0) {
+        pushLog(`@名单采集：最终解析失败名单 -> ${failures.map((item) => `${item.nickname}（${item.reason}）`).join('；')}`);
+      }
+      setStatusTone('success');
+      setStatusText(`@名单采集完成，候选 ${pausedMentionScan.candidates.length}，解析已关注用户 ${mentionAuthors.length}，新增 ${response.added}，合并 ${response.merged}。`);
+    } catch (error) {
+      setStatusTone('error');
+      setStatusText(error instanceof Error ? error.message : '@ 名单采集失败，请稍后重试。');
+      pushLog(`@名单采集失败：${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
       setLoading(false);
     }
   }
@@ -2578,9 +3959,18 @@ export function PopupApp() {
                   停止搜集
                 </button>
               ) : null}
+              {pausedMentionScan && !loading ? (
+                <button
+                  type="button"
+                  onClick={handleResumeMentionScan}
+                  className="rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 shadow-sm transition hover:bg-violet-50"
+                >
+                  继续@名单采集
+                </button>
+              ) : null}
             </div>
           </div>
-          <div className="mt-3 grid grid-cols-3 gap-2">
+          <div className="mt-3 grid grid-cols-4 gap-2">
             <button
               type="button"
               onClick={() => handleScanClick('page')}
@@ -2596,6 +3986,14 @@ export function PopupApp() {
               className="rounded-[20px] border-2 border-[#ffb8c4] bg-white px-3 py-3 text-sm font-semibold text-slate-800 shadow-[0_4px_12px_rgba(255,36,66,0.08)] transition hover:-translate-y-[1px] hover:border-[#ff7f95] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500"
             >
               {loading ? '处理中...' : '自动滚动搜集'}
+            </button>
+            <button
+              type="button"
+              onClick={handleMentionScanClick}
+              disabled={loading}
+              className="rounded-[20px] border-2 border-[#ffb8c4] bg-white px-3 py-3 text-sm font-semibold text-slate-800 shadow-[0_4px_12px_rgba(255,36,66,0.08)] transition hover:-translate-y-[1px] hover:border-[#ff7f95] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-300 disabled:bg-slate-100 disabled:text-slate-500"
+            >
+              {loading ? '处理中...' : '@名单采集'}
             </button>
             <button
               type="button"
