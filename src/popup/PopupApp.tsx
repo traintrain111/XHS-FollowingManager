@@ -13,6 +13,18 @@ type MentionCandidate = {
 type MentionSearchResolveResult = {
   author: Author | null;
   reason: string;
+  verificationDetected?: boolean;
+};
+type MentionScanFailure = {
+  nickname: string;
+  reason: string;
+};
+type PausedMentionScanState = {
+  candidates: MentionCandidate[];
+  nextIndex: number;
+  collectedAuthors: Author[];
+  failures: MentionScanFailure[];
+  windowId?: number;
 };
 type ScanProgressMessage = {
   type: 'SCAN_PROGRESS';
@@ -2118,6 +2130,7 @@ async function collectMentionCandidatesInActivePage(): Promise<MentionCandidate[
 
 async function resolveMentionCandidateBySearch(candidate: MentionCandidate, windowId?: number): Promise<MentionSearchResolveResult> {
   let createdTabId: number | null = null;
+  let keepCreatedTab = false;
   const searchUrl = `https://www.xiaohongshu.com/search_result?keyword=${encodeURIComponent(candidate.nickname)}&source=web_search_result_notes`;
 
   try {
@@ -2131,7 +2144,7 @@ async function resolveMentionCandidateBySearch(candidate: MentionCandidate, wind
       return { author: null, reason: '创建搜索标签页失败。' };
     }
     await waitForTabComplete(createdTabId, 18000);
-    await delay(300);
+    await delay(1200);
 
     const results = await chrome.scripting.executeScript({
       target: { tabId: createdTabId },
@@ -2140,6 +2153,7 @@ async function resolveMentionCandidateBySearch(candidate: MentionCandidate, wind
         type PageResult = {
           author: PageAuthor | null;
           reason: string;
+          verificationDetected?: boolean;
         };
         type PageAuthor = {
           user_id: string;
@@ -2174,6 +2188,29 @@ async function resolveMentionCandidateBySearch(candidate: MentionCandidate, wind
           return rect.width > 8 && rect.height > 8 && style.visibility !== 'hidden' && style.display !== 'none';
         };
         const normalizeText = (text: string) => text.replace(/\s+/g, ' ').trim();
+        const detectVerificationReason = (): string | null => {
+          const pageText = normalizeText(document.body?.innerText || '');
+          const keywords = [
+            '安全验证',
+            '验证码',
+            '请完成验证',
+            '完成验证后继续',
+            '异常访问',
+            '访问异常',
+            '滑块',
+            '拖动滑块',
+            '风险校验',
+          ];
+          const matchedKeyword = keywords.find((keyword) => pageText.includes(keyword));
+          if (matchedKeyword) {
+            return `检测到小红书验证页信号：${matchedKeyword}。`;
+          }
+          const url = `${window.location.pathname}${window.location.search}`;
+          if (/captcha|verify|verification|risk/i.test(url)) {
+            return '检测到验证页 URL。';
+          }
+          return null;
+        };
         const normalizeAvatar = (url?: string) => {
           if (!url) {
             return '';
@@ -2313,22 +2350,34 @@ async function resolveMentionCandidateBySearch(candidate: MentionCandidate, wind
 
           return null;
         };
-        const triggerUserTabSearch = async (): Promise<boolean> => {
+        const triggerUserTabSearch = async (): Promise<PageResult> => {
           clearStoredPayloads();
           for (let attempt = 0; attempt < 12; attempt += 1) {
+            const verificationReason = detectVerificationReason();
+            if (verificationReason) {
+              return { author: null, reason: verificationReason, verificationDetected: true };
+            }
             const userTab = findUserTab();
             if (userTab) {
               dispatchClick(userTab);
             }
 
             for (let waitRound = 0; waitRound < 4; waitRound += 1) {
-              if (readPayloadMatch()) {
-                return true;
+              const waitingVerificationReason = detectVerificationReason();
+              if (waitingVerificationReason) {
+                return { author: null, reason: waitingVerificationReason, verificationDetected: true };
+              }
+              const payloadMatch = readPayloadMatch();
+              if (payloadMatch.author) {
+                return payloadMatch;
               }
               await delay(250);
             }
           }
-          return false;
+          return {
+            author: null,
+            reason: findUserTab() ? '已找到用户 tab，但未捕获到 usersearch 响应。' : '未找到用户 tab。',
+          };
         };
         const readPayloadMatch = (): PageResult => {
           const scopedWindow = window as typeof window & Record<string, unknown>;
@@ -2377,6 +2426,7 @@ async function resolveMentionCandidateBySearch(candidate: MentionCandidate, wind
                   note: '',
                 },
                 reason: `usersearch 响应成功，命中已关注用户 ${userId}。`,
+                verificationDetected: false,
               };
             }
           }
@@ -2395,14 +2445,18 @@ async function resolveMentionCandidateBySearch(candidate: MentionCandidate, wind
           return { author: null, reason: `找到了 ${followedSameNameUsers} 个已关注同名用户，但头像未匹配。` };
         };
         installSearchResponseHook();
-        const userTabTriggered = await triggerUserTabSearch();
-        if (!userTabTriggered) {
-          return {
-            author: null,
-            reason: findUserTab() ? '已找到用户 tab，但未捕获到 usersearch 响应。' : '未找到用户 tab。',
-          };
+        const userTabResult = await triggerUserTabSearch();
+        if (userTabResult.author || userTabResult.verificationDetected) {
+          return userTabResult;
+        }
+        if (userTabResult.reason) {
+          return userTabResult;
         }
         for (let attempt = 0; attempt < 8; attempt += 1) {
+          const verificationReason = detectVerificationReason();
+          if (verificationReason) {
+            return { author: null, reason: verificationReason, verificationDetected: true };
+          }
           const payloadMatch = readPayloadMatch();
           if (payloadMatch.author) {
             return payloadMatch;
@@ -2414,14 +2468,16 @@ async function resolveMentionCandidateBySearch(candidate: MentionCandidate, wind
       args: [candidate],
     });
 
-    return results[0]?.result ?? { author: null, reason: '搜索页脚本没有返回结果。' };
+    const resolved = results[0]?.result ?? { author: null, reason: '搜索页脚本没有返回结果。' };
+    keepCreatedTab = Boolean(resolved.verificationDetected);
+    return resolved;
   } catch (error) {
     return {
       author: null,
       reason: error instanceof Error ? error.message : '搜索页解析抛出了未知异常。',
     };
   } finally {
-    if (createdTabId) {
+    if (createdTabId && !keepCreatedTab) {
       try {
         await chrome.tabs.remove(createdTabId);
       } catch {
@@ -3052,6 +3108,7 @@ export function PopupApp() {
   const [activityLogs, setActivityLogs] = useState<string[]>([]);
   const [statusText, setStatusText] = useState('打开小红书搜索结果页，并勾选“已关注”筛选后开始扫描。');
   const [statusTone, setStatusTone] = useState<StatusTone>('idle');
+  const [pausedMentionScan, setPausedMentionScan] = useState<PausedMentionScanState | null>(null);
   const secondaryCollectStopRequestedRef = useRef(false);
 
   useEffect(() => {
@@ -3125,6 +3182,50 @@ export function PopupApp() {
 
   function pushLog(message: string) {
     setActivityLogs((current) => [message, ...current].slice(0, 14));
+  }
+
+  async function runMentionScan(
+    candidates: MentionCandidate[],
+    windowId: number | undefined,
+    startIndex = 0,
+    initialAuthors: Author[] = [],
+    initialFailures: MentionScanFailure[] = [],
+  ) {
+    const mentionAuthors = [...initialAuthors];
+    const failures = [...initialFailures];
+
+    for (let index = startIndex; index < candidates.length; index += 1) {
+      const candidate = candidates[index];
+      setStatusText(`正在通过小红书用户搜索解析 @ 候选 ${index + 1}/${candidates.length}：${candidate.nickname}`);
+      pushLog(`@名单采集：开始解析 ${index + 1}/${candidates.length} -> ${candidate.nickname}。`);
+      const result = await resolveMentionCandidateBySearch(candidate, windowId);
+      if (result.author) {
+        mentionAuthors.push(result.author);
+        pushLog(`@名单采集：已命中 ${candidate.nickname} -> ${result.author.user_id}。${result.reason}`);
+      } else if (result.verificationDetected) {
+        setPausedMentionScan({
+          candidates,
+          nextIndex: index,
+          collectedAuthors: mentionAuthors,
+          failures,
+          windowId,
+        });
+        setStatusTone('info');
+        setStatusText('检测到小红书安全验证，已暂停 @名单采集。请先在当前页面完成验证，再点击“继续@名单采集”。');
+        pushLog(`@名单采集：在 ${candidate.nickname} 处因验证暂停。原因：${result.reason}`);
+        if (failures.length > 0) {
+          pushLog(`@名单采集：当前累计失败名单 -> ${failures.map((item) => `${item.nickname}（${item.reason}）`).join('；')}`);
+        }
+        return { paused: true, mentionAuthors, failures };
+      } else {
+        failures.push({ nickname: candidate.nickname, reason: result.reason });
+        pushLog(`@名单采集：未命中 ${candidate.nickname}。原因：${result.reason}`);
+      }
+      await delay(300);
+    }
+
+    setPausedMentionScan(null);
+    return { paused: false, mentionAuthors, failures };
   }
 
   function getTagScoreDetails(author: Author) {
@@ -3323,6 +3424,7 @@ export function PopupApp() {
 
   async function handleMentionScanClick() {
     setLoading(true);
+    setPausedMentionScan(null);
     setStatusTone('info');
     setStatusText('正在打开第一篇笔记并读取评论区 @ 候选名单，请暂时不要操作当前小红书页面...');
     pushLog('@名单采集开始：准备打开第一篇笔记并读取评论区候选名单。');
@@ -3335,18 +3437,9 @@ export function PopupApp() {
       }
       pushLog(`@名单采集：已读取候选 ${candidates.length}。`);
 
-      const mentionAuthors: Author[] = [];
-      for (const [index, candidate] of candidates.entries()) {
-        setStatusText(`正在通过小红书用户搜索解析 @ 候选 ${index + 1}/${candidates.length}：${candidate.nickname}`);
-        pushLog(`@名单采集：开始解析 ${index + 1}/${candidates.length} -> ${candidate.nickname}。`);
-        const result = await resolveMentionCandidateBySearch(candidate, activeTab.windowId);
-        if (result.author) {
-          mentionAuthors.push(result.author);
-          pushLog(`@名单采集：已命中 ${candidate.nickname} -> ${result.author.user_id}。${result.reason}`);
-        } else {
-          pushLog(`@名单采集：未命中 ${candidate.nickname}。原因：${result.reason}`);
-        }
-        await delay(300);
+      const { paused, mentionAuthors, failures } = await runMentionScan(candidates, activeTab.windowId);
+      if (paused) {
+        return;
       }
 
       if (mentionAuthors.length === 0) {
@@ -3356,8 +3449,54 @@ export function PopupApp() {
       const response = await storage.upsertAuthors(mentionAuthors);
       await refreshData();
       pushLog(`@名单采集：候选 ${candidates.length}，解析 ${mentionAuthors.length}，新增 ${response.added}，合并 ${response.merged}。`);
+      if (failures.length > 0) {
+        pushLog(`@名单采集：最终解析失败名单 -> ${failures.map((item) => `${item.nickname}（${item.reason}）`).join('；')}`);
+      }
       setStatusTone('success');
       setStatusText(`@名单采集完成，候选 ${candidates.length}，解析已关注用户 ${mentionAuthors.length}，新增 ${response.added}，合并 ${response.merged}。`);
+    } catch (error) {
+      setStatusTone('error');
+      setStatusText(error instanceof Error ? error.message : '@ 名单采集失败，请稍后重试。');
+      pushLog(`@名单采集失败：${error instanceof Error ? error.message : '未知错误'}`);
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  async function handleResumeMentionScan() {
+    if (!pausedMentionScan) {
+      return;
+    }
+
+    setLoading(true);
+    setStatusTone('info');
+    setStatusText('正在继续 @名单采集，请先在当前搜索页完成验证后等待继续执行...');
+    pushLog(`@名单采集继续：从 ${pausedMentionScan.nextIndex + 1}/${pausedMentionScan.candidates.length} 继续。`);
+
+    try {
+      const { paused, mentionAuthors, failures } = await runMentionScan(
+        pausedMentionScan.candidates,
+        pausedMentionScan.windowId,
+        pausedMentionScan.nextIndex,
+        pausedMentionScan.collectedAuthors,
+        pausedMentionScan.failures,
+      );
+      if (paused) {
+        return;
+      }
+
+      if (mentionAuthors.length === 0) {
+        throw new Error(`读取到 @ 候选 ${pausedMentionScan.candidates.length} 个，但没有在用户搜索页匹配到已关注用户。`);
+      }
+
+      const response = await storage.upsertAuthors(mentionAuthors);
+      await refreshData();
+      pushLog(`@名单采集：候选 ${pausedMentionScan.candidates.length}，解析 ${mentionAuthors.length}，新增 ${response.added}，合并 ${response.merged}。`);
+      if (failures.length > 0) {
+        pushLog(`@名单采集：最终解析失败名单 -> ${failures.map((item) => `${item.nickname}（${item.reason}）`).join('；')}`);
+      }
+      setStatusTone('success');
+      setStatusText(`@名单采集完成，候选 ${pausedMentionScan.candidates.length}，解析已关注用户 ${mentionAuthors.length}，新增 ${response.added}，合并 ${response.merged}。`);
     } catch (error) {
       setStatusTone('error');
       setStatusText(error instanceof Error ? error.message : '@ 名单采集失败，请稍后重试。');
@@ -3818,6 +3957,15 @@ export function PopupApp() {
                   className="rounded-full border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-700 shadow-sm transition hover:bg-sky-50"
                 >
                   停止搜集
+                </button>
+              ) : null}
+              {pausedMentionScan && !loading ? (
+                <button
+                  type="button"
+                  onClick={handleResumeMentionScan}
+                  className="rounded-full border border-violet-200 bg-white px-3 py-1.5 text-xs font-medium text-violet-700 shadow-sm transition hover:bg-violet-50"
+                >
+                  继续@名单采集
                 </button>
               ) : null}
             </div>
