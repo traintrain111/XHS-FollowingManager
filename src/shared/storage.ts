@@ -2,7 +2,7 @@ import { STORAGE_KEYS } from './constants';
 import type { Author, Tag } from './types';
 
 const MAX_TAGS = 20;
-const MAX_AUTHOR_TAGS = 5;
+const MAX_AUTHOR_TAGS = 2;
 
 function dedupeTags(tags: string[]): string[] {
   return [...new Set(tags)].slice(0, MAX_AUTHOR_TAGS);
@@ -60,6 +60,13 @@ export const storage = {
 
   async clearAuthors(): Promise<void> {
     await chrome.storage.local.set({ [STORAGE_KEYS.AUTHORS]: [] });
+  },
+
+  async deleteAuthor(userId: string): Promise<Author[]> {
+    const authors = await this.getAuthors();
+    const nextAuthors = authors.filter((author) => author.user_id !== userId);
+    await chrome.storage.local.set({ [STORAGE_KEYS.AUTHORS]: nextAuthors });
+    return nextAuthors;
   },
 
   async upsertAuthors(incomingAuthors: Author[]): Promise<{
@@ -175,6 +182,7 @@ export const storage = {
   },
 
   async toggleAuthorTag(userId: string, tagName: string): Promise<Author[]> {
+    await this.ensureTags([tagName]);
     const authors = await this.getAuthors();
     const nextAuthors = authors.map((author) => {
       if (author.user_id !== userId) {
@@ -190,7 +198,7 @@ export const storage = {
       }
 
       if (author.tags.length >= MAX_AUTHOR_TAGS) {
-        throw new Error('每位博主最多只能添加 5 个标签。');
+        throw new Error('每位博主最多只能添加 2 个标签。');
       }
 
       return {

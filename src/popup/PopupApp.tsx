@@ -3,8 +3,8 @@ import { storage } from '../shared/storage';
 import { XHS_HOST } from '../shared/constants';
 import type { Author, Tag } from '../shared/types';
 
-type StatusTone = 'idle' | 'success' | 'error';
-type ViewMode = 'authors' | 'tags';
+type StatusTone = 'idle' | 'info' | 'success' | 'error';
+type ViewMode = 'authors' | 'tags' | 'favorites';
 type ScanMode = 'page' | 'auto';
 type ScanProgressMessage = {
   type: 'SCAN_PROGRESS';
@@ -16,32 +16,589 @@ type ScanProgressMessage = {
 };
 
 const TAG_RECOMMENDATION_KEYWORDS: Record<string, string[]> = {
-  美食: ['美食', '探店', '吃货', '餐厅', '料理', '烘焙', '咖啡', '甜品', '火锅', '小吃', '早餐', '下午茶', '夜宵', '菜谱', '家常菜', '饮品', '奶茶'],
-  穿搭: ['穿搭', 'ootd', '搭配', '时尚', '服饰', '女装', '男装', '鞋子', '包包', '首饰', '通勤穿搭', '显瘦', 'lookbook'],
-  旅行: ['旅行', '旅游', '攻略', '出行', '酒店', '机票', '民宿', 'citywalk', '打卡', '景点', '自由行', '周末去哪', '路线'],
-  摄影: ['摄影', '拍照', '相机', '修图', '镜头', '人像', '胶片', '写真', '构图', '后期', '滤镜'],
-  健身: ['健身', '减脂', '塑形', '跑步', '瑜伽', '训练', '增肌', '体态', '普拉提', '燃脂', '运动'],
-  美妆: ['美妆', '护肤', '彩妆', '口红', '香水', '面膜', '粉底', '化妆', '底妆', '眼影', '腮红', '护发'],
-  母婴: ['母婴', '宝宝', '育儿', '孕妈', '早教', '辅食', '带娃', '亲子', '儿童', '婴儿', '宝妈'],
-  家居: ['家居', '收纳', '装修', '软装', '居家', '清洁', '房间', '卧室', '客厅', '家装', '生活好物'],
-  学习: ['学习', '英语', '留学', '职场', '效率', '考研', '课程', '自律', '面试', '写作', '备考', '复习', '刷题'],
-  数码: ['数码', '手机', '电脑', 'ipad', '耳机', '测评', '科技', '相机参数', '键盘', '显示器', 'app推荐'],
-  手帐: ['手帐', '手账', '拼贴', '胶带', '排版', '本子', '文具', '贴纸', '笔记本', '手帐素材', '文具店', '手帐店', '印章'],
-  阅读: ['阅读', '书单', '读书', '书评', '荐书', '文学', '小说', '非虚构', '阅读笔记'],
-  宠物: ['宠物', '猫咪', '狗狗', '养猫', '养狗', '萌宠', '宠物日常', '猫猫', '狗子'],
-  生活: ['生活', 'vlog', '日常', '好物', '开箱', '生活方式', '居家日常'],
-  搞笑: ['搞笑', '喜剧', '段子', '整活', '沙雕', '幽默', '爆笑'],
-  绘画: ['绘画', '画画', '插画', '板绘', '水彩', '素描', '临摹', 'procreate'],
+  美食: [
+    '美食',
+    '小吃',
+    '料理',
+    '餐厅',
+    '餐馆',
+    '美味',
+    '烧烤',
+    '火锅',
+    '甜点',
+    '蛋糕',
+    '饮品',
+    '饮食',
+    '奶茶',
+    '咖啡',
+    '甜品',
+    '面包',
+    '烘焙',
+    '烹饪',
+    '菜谱',
+    '做饭',
+    '下厨',
+    '食谱',
+    '厨艺',
+    '吃播',
+    '午餐',
+    '夜宵',
+    '探店',
+    '早餐',
+    '饮品店',
+    '美食博主',
+  ],
+  穿搭: [
+    '穿搭',
+    'ootd',
+    '搭配',
+    'look',
+    'lookbook',
+    '时尚',
+    '潮流',
+    '潮搭',
+    '服饰',
+    '穿衣分享',
+    '衣橱',
+    '风格',
+    '潮流博主',
+    '造型',
+    '穿衣搭配',
+    '穿搭博主',
+    '时尚博主',
+    '外套',
+    '裙子',
+    '裤装',
+    '鞋履',
+    '买手',
+    '选品',
+  ],
+  美妆: [
+    '美妆',
+    '化妆',
+    '彩妆',
+    '护肤',
+    '口红',
+    '粉底',
+    '眼影',
+    '腮红',
+    '睫毛',
+    '妆容',
+    '卸妆',
+    '美妆测评',
+    '试色',
+    '化妆教程',
+    '护肤品',
+    '美白',
+    '补水',
+    '防晒',
+    '面膜',
+    '保养',
+    '底妆',
+    '美容',
+    '美甲',
+    '造型师',
+    '化妆师',
+    '彩妆师',
+    '美容顾问',
+    '皮肤管理',
+    '美妆博主',
+  ],
+  旅行: [
+    '旅行',
+    '旅游',
+    '旅途',
+    '游记',
+    '攻略',
+    '目的地',
+    '打卡',
+    '酒店',
+    '景点',
+    '自由行',
+    '徒步',
+    '露营',
+    '海岛',
+    '城市游',
+    '旅行摄影',
+    '旅行博主',
+    '旅拍',
+    '行程',
+    '出行',
+    '背包客',
+    '旅游博主',
+    '环球',
+    '旅居',
+    '在路上',
+    '行走',
+  ],
+  户外: [
+    '户外',
+    '徒步',
+    '露营',
+    '登山',
+    '野营',
+    '攀岩',
+    '钓鱼',
+    '骑行',
+    '滑雪',
+    '冲浪',
+    '潜水',
+    '越野',
+    '户外探险',
+    '户外装备',
+    '户外运动',
+    '徒步旅行',
+    '跑山',
+    '户外博主',
+    '探险',
+  ],
+  摄影: [
+    '摄影',
+    '摄影师',
+    '拍照',
+    '相机',
+    '镜头',
+    '摄影技巧',
+    '构图',
+    '光影',
+    '人像',
+    '风光',
+    '街拍',
+    '摄影约拍',
+    '摄影作品',
+    '滤镜',
+    '修图',
+    '胶片',
+    '摄影教程',
+    '后期',
+    '纪实',
+    '摄影博主',
+    '记录者',
+    '视觉',
+  ],
+  健身: [
+    '健身',
+    '运动',
+    '健身房',
+    '塑形',
+    '瑜伽',
+    '跑步',
+    '减脂',
+    '增肌',
+    '健身计划',
+    '练习',
+    '健身打卡',
+    '力量训练',
+    '有氧',
+    '健身分享',
+    '健身餐',
+    '普拉提',
+    '健身教练',
+    '私教',
+    '营养师',
+    '体能训练',
+  ],
+  母婴: [
+    '母婴',
+    '孕期',
+    '怀孕',
+    '产后',
+    '育儿',
+    '母乳喂养',
+    '宝宝辅食',
+    '婴儿',
+    '月子',
+    '幼儿',
+    '亲子',
+    '孕妈',
+    '妈妈分享',
+    '母婴用品',
+    '早教',
+    '育儿经验',
+    '辅食',
+    '亲子活动',
+    '宝妈',
+    '妈妈',
+    '新手妈妈',
+    '二胎',
+    '全职妈妈',
+    '宝宝',
+  ],
+  家居: [
+    '家居',
+    '装修',
+    '软装',
+    '家装',
+    '家具',
+    '收纳',
+    '整理',
+    '家居设计',
+    '布置',
+    '家居风格',
+    '室内设计',
+    '装饰',
+    '家装分享',
+    '租房改造',
+    '家居美学',
+    '家居分享',
+    '家具测评',
+    '设计师',
+    '家居博主',
+    '生活美学',
+  ],
+  知识: [
+    '知识',
+    '认知',
+    '科普',
+    '历史',
+    '心理学',
+    '哲学',
+    '教育',
+    '经济',
+    '商业',
+    '管理',
+    '科技',
+    '学习',
+    '知识分享',
+    '课程',
+    '干货',
+    '思维方式',
+    '学术',
+    '讲座',
+    '报告',
+    '科普文章',
+    '笔记',
+    '考研',
+    '考公',
+    '英语',
+    '语言学习',
+    '职场',
+    '效率',
+    '理财',
+    '投资',
+    '副业',
+    '编程',
+    '设计',
+    '自我提升',
+  ],
+  科技数码: [
+    '科技数码',
+    'ai',
+    '科技',
+    '数码',
+    '数码产品',
+    '手机',
+    '电脑',
+    '黑科技',
+    '虚拟现实',
+    '软件',
+    '编程',
+    '机器人',
+    '智能',
+    '互联网',
+    '极客',
+    '数码测评',
+    '产品评测',
+    '电子设备',
+    '系统',
+    '测评',
+    '开箱',
+    '数码博主',
+    '工程师',
+    '程序员',
+    '设备党',
+    '桌面',
+    'ipad',
+  ],
+  手工: [
+    '手工',
+    'diy',
+    '手作',
+    '手工艺',
+    '手工饰品',
+    '剪纸',
+    '陶艺',
+    '黏土',
+    '手工包',
+    '木工',
+    '布艺',
+    '手工教程',
+    '工艺品',
+    '装饰',
+    '拼豆',
+    '串珠',
+    '编绳',
+    '缝纫',
+    '编织',
+    '钩针',
+    '刺绣',
+    '羊毛毡',
+    '手工博主',
+    '手帐',
+    '手账',
+    '拼贴',
+    '胶带',
+    '贴纸',
+    '文具',
+  ],
+  阅读: [
+    '阅读',
+    '书单',
+    '读书',
+    '荐书',
+    '小说',
+    '文学',
+    '书评',
+    '阅读分享',
+    '读后感',
+    '作家',
+    '长篇',
+    '短篇',
+    '散文',
+    '书摘',
+    '经典名著',
+    '阅读笔记',
+    '名人传记',
+    '读书笔记',
+    '书房',
+    '读书博主',
+    '书虫',
+    '爱书人',
+  ],
+  音乐: [
+    '音乐',
+    '唱歌',
+    '翻唱',
+    '原创音乐',
+    '原创歌曲',
+    '音乐分享',
+    '歌曲推荐',
+    '听歌',
+    '歌单',
+    'playlist',
+    '单曲循环',
+    '新歌',
+    'live',
+    '现场',
+    '演出',
+    '音乐现场',
+    '乐队',
+    '歌手',
+    '音乐人',
+    '独立音乐',
+    'indie',
+    '民谣',
+    '摇滚',
+    '爵士',
+    '古典',
+    '电子',
+    '嘻哈',
+    'rap',
+    'r&b',
+    'kpop',
+    '专辑',
+    'ep',
+    '音源',
+    '编曲',
+    '作曲',
+    '写歌',
+    '录音',
+    'demo',
+    'cover',
+    '吉他',
+    '钢琴',
+    '小提琴',
+    '贝斯',
+    '鼓',
+    '架子鼓',
+    '尤克里里',
+    '键盘',
+    '电子琴',
+    '萨克斯',
+    '长笛',
+    '二胡',
+    '古筝',
+    '琵琶',
+    '乐器演奏',
+    '指弹',
+    '弹唱',
+    'solo',
+    '音乐博主',
+    '乐评',
+    '听后感',
+    '专辑推荐',
+    '演唱会',
+    '巡演',
+    '音乐节',
+    '练歌',
+    '开嗓',
+    '清唱',
+    '和声',
+    '伴奏',
+    '扒谱',
+    '练琴',
+    '翻弹',
+    '翻奏',
+    'bgm',
+  ],
+  宠物: [
+    '宠物',
+    '猫',
+    '狗',
+    '猫咪',
+    '狗狗',
+    '宠物日常',
+    '宠物护理',
+    '宠物用品',
+    '萌宠',
+    '喵星人',
+    '汪星人',
+    '宠物故事',
+    '宠物健康',
+    '领养',
+    '宠物摄影',
+    '宠物视频',
+    '铲屎官',
+    '毛孩子',
+    '养猫',
+    '养狗',
+    '宠物博主',
+    '猫奴',
+    '狗奴',
+    '多猫家庭',
+  ],
+  生活: [
+    '生活',
+    '日常',
+    '记录',
+    '分享',
+    '日记',
+    '家常',
+    '生活美学',
+    '生活方式',
+    '心情',
+    '感悟',
+    '日常分享',
+    '生活记录',
+    '自律',
+    '家居小事',
+    '随记',
+    '生活拍照',
+    '日常vlog',
+    'vlog',
+    '生活博主',
+    '慢生活',
+    '独居',
+    '仪式感',
+    '治愈',
+    '松弛感',
+  ],
+  搞笑: [
+    '搞笑',
+    '喜剧',
+    '段子',
+    '整活',
+    '爆笑',
+    '幽默',
+    '搞笑视频',
+    '逗比',
+    '搞笑日常',
+    '搞笑分享',
+    '搞笑短剧',
+    '搞笑博主',
+    '吐槽',
+    '搞笑配音',
+    '搞笑剪辑',
+    '段子手',
+    '沙雕',
+    '脱口秀',
+  ],
+  绘画: [
+    '绘画',
+    '画画',
+    '插画',
+    '手绘',
+    '素描',
+    '水彩',
+    '油画',
+    '板绘',
+    '漫画',
+    '插画师',
+    '绘画教程',
+    '线稿',
+    '彩铅',
+    '画师',
+    '艺术创作',
+    '油彩',
+    '速写',
+    '素描练习',
+    '国画',
+    '原创',
+    'procreate',
+    '美术',
+    '艺术',
+  ],
+  健康: [
+    '健康',
+    '养生',
+    '饮食',
+    '营养',
+    '健康管理',
+    '健康分享',
+    '心理健康',
+    '运动',
+    '饮食调理',
+    '健康习惯',
+    '睡眠',
+    '健康饮食',
+    '防病',
+    '疾病预防',
+    '体检',
+    '康复',
+    '中医',
+    '理疗',
+    '营养师',
+    '身心健康',
+    '医生',
+  ],
+  情感: [
+    '情感',
+    '恋爱',
+    '婚姻',
+    '感情',
+    '关系',
+    '爱情',
+    '心情',
+    '共鸣',
+    '情感故事',
+    '情感分析',
+    '情感咨询',
+    '失恋',
+    '亲密关系',
+    '情感分享',
+    '情感日记',
+    '心理咨询',
+    '两性关系',
+    '情侣',
+    '情感博主',
+    '心理',
+    '情绪',
+    '树洞',
+  ],
 };
 const DEFAULT_RECOMMENDATION_TAGS = Object.keys(TAG_RECOMMENDATION_KEYWORDS);
 const DEFAULT_TAG_NAME_SET = new Set(DEFAULT_RECOMMENDATION_TAGS);
 const NICKNAME_WEAK_KEYWORDS: Record<string, string[]> = {
-  美食: ['奶茶', '咖啡', '甜品'],
+  美食: ['奶茶', '咖啡', '甜品', '蛋糕', '面包'],
   宠物: ['猫', '狗'],
-  学习: ['笔记', '课程'],
-  生活: ['生活', '日常', '记录', '分享'],
+  知识: ['学习', '笔记', '课程', '干货'],
+  生活: ['生活', '日常', '记录', '分享', 'vlog', '心情'],
+  情感: ['心情', '情绪', '共鸣'],
 };
-const SECONDARY_COLLECT_DELAY_MS = 4500;
+const SECONDARY_COLLECT_DELAY_MIN_MS = 3200;
+const SECONDARY_COLLECT_DELAY_MAX_MS = 5200;
+const SECONDARY_COLLECT_BATCH_SIZE = 5;
+const SECONDARY_COLLECT_BATCH_BREAK_MS = 12000;
 const SECONDARY_COLLECT_SETTLE_MS = 2500;
 const SECONDARY_COLLECT_TIMEOUT_MS = 20000;
 const VERIFICATION_PATTERNS = [
@@ -58,11 +615,46 @@ const NOISE_SUMMARY_PATTERNS = [
   '沪ICP备',
   '增值电信业务经营许可证',
   '网络文化经营许可证',
+  '医疗器械网络交易服务第三方平台备案',
+  '互联网药品信息服务资格证书',
+  '经营性-2023',
+  '上海市互联网举报中心',
+  '网械平台备字',
+  '备案号',
   '小红书APP',
   '问题反馈',
   '复制 LaTeX 公式',
   '已复制',
 ];
+const UNTAGGED_TAG_ID = '__untagged__';
+const UNTAGGED_TAG_NAME = '无标签';
+const TAG_DISPLAY_ICONS: Record<string, string> = {
+  美食: '🍜',
+  穿搭: '👗',
+  美妆: '💄',
+  旅行: '✈️',
+  户外: '🏕️',
+  摄影: '📷',
+  健身: '💪',
+  母婴: '👶',
+  家居: '🏠',
+  知识: '📚',
+  科技数码: '💻',
+  手工: '✂️',
+  阅读: '📖',
+  音乐: '🎵',
+  宠物: '🐾',
+  生活: '🌿',
+  搞笑: '😂',
+  绘画: '🎨',
+  健康: '🩺',
+  情感: '💞',
+  无标签: '🏷️',
+};
+
+function getTagDisplayIcon(tagName: string) {
+  return TAG_DISPLAY_ICONS[tagName] ?? '🏷️';
+}
 
 function cleanNicknameText(rawText: string): string {
   return rawText
@@ -96,6 +688,10 @@ async function delay(ms: number) {
   });
 }
 
+function getRandomDelay(minMs: number, maxMs: number) {
+  return Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
+}
+
 async function waitForTabComplete(tabId: number, timeoutMs = SECONDARY_COLLECT_TIMEOUT_MS) {
   const currentTab = await chrome.tabs.get(tabId);
   if (currentTab.status === 'complete') {
@@ -127,6 +723,7 @@ async function waitForTabComplete(tabId: number, timeoutMs = SECONDARY_COLLECT_T
 async function collectAuthorProfileSummariesSlowly(
   candidates: Author[],
   onProgress?: (finished: number, total: number, nickname: string) => void,
+  shouldStop?: () => boolean,
 ): Promise<
   Array<{
     user_id: string;
@@ -149,6 +746,10 @@ async function collectAuthorProfileSummariesSlowly(
   }> = [];
 
   for (let index = 0; index < candidates.length; index += 1) {
+    if (shouldStop?.()) {
+      break;
+    }
+
     const candidate = candidates[index];
     let createdTabId: number | null = null;
 
@@ -166,13 +767,23 @@ async function collectAuthorProfileSummariesSlowly(
       }
 
       await waitForTabComplete(createdTabId);
+      if (shouldStop?.()) {
+        continue;
+      }
       await delay(SECONDARY_COLLECT_SETTLE_MS);
+      if (shouldStop?.()) {
+        continue;
+      }
 
       const results = await chrome.scripting.executeScript({
         target: { tabId: createdTabId },
-        func: () => {
+        func: async () => {
           const normalizeText = (input: string) =>
             input.replace(/\s+/g, ' ').replace(/[|｜]+/g, ' ').trim();
+          const wait = (ms: number) =>
+            new Promise<void>((resolve) => {
+              window.setTimeout(resolve, ms);
+            });
           const verificationPatterns = [
             '安全验证',
             '为保护账号安全',
@@ -187,6 +798,12 @@ async function collectAuthorProfileSummariesSlowly(
             '沪ICP备',
             '增值电信业务经营许可证',
             '网络文化经营许可证',
+            '医疗器械网络交易服务第三方平台备案',
+            '互联网药品信息服务资格证书',
+            '经营性-2023',
+            '上海市互联网举报中心',
+            '网械平台备字',
+            '备案号',
             '小红书APP',
             '问题反馈',
             '复制 LaTeX 公式',
@@ -205,124 +822,212 @@ async function collectAuthorProfileSummariesSlowly(
               'img[class*="avatar"], img[class*="user"], img[alt*="头像"]',
             )?.src || undefined;
 
-          const metaCandidates = [
-            document.querySelector('meta[name="description"]')?.getAttribute('content') ?? '',
-            document.querySelector('meta[property="og:description"]')?.getAttribute('content') ?? '',
-            document.title,
-          ];
+          let mainElement: HTMLElement = (document.querySelector('main') ?? document.body) as HTMLElement;
+          let markerElement: HTMLElement | undefined;
+          let statsElement: HTMLElement | undefined;
 
-          const markerElement = Array.from(document.querySelectorAll<HTMLElement>('main *')).find(
-            (element) => {
+          const findAnchors = () => {
+            mainElement = (document.querySelector('main') ?? document.body) as HTMLElement;
+            const elements = Array.from(mainElement.querySelectorAll<HTMLElement>('*'));
+            const combinedMarker = elements.find((element) => {
               const text = normalizeText(element.innerText || '');
-              return text.includes('小红书号') && text.includes('IP属地');
-            },
-          );
+              return text.includes('小红书号') && text.includes('IP属地') && text.length <= 160;
+            });
+            const xhsIdMarker = elements.find((element) => {
+              const text = normalizeText(element.innerText || '');
+              return text.includes('小红书号') && text.length <= 120;
+            });
+            const ipMarker = elements.find((element) => {
+              const text = normalizeText(element.innerText || '');
+              return text.includes('IP属地') && text.length <= 120;
+            });
+            const stats = elements.find((element) => {
+              const text = normalizeText(element.innerText || '');
+              return text.includes('关注') && text.includes('粉丝') && text.includes('获赞与收藏');
+            });
 
-          const targetedIntroCandidates = markerElement
-            ? Array.from(document.querySelectorAll<HTMLElement>('main p, main span, main div'))
-                .filter((element) => {
-                  if (element === markerElement) {
-                    return false;
-                  }
+            markerElement = combinedMarker ?? xhsIdMarker ?? ipMarker;
+            statsElement = stats;
+          };
 
-                  const text = normalizeText(element.innerText || '');
-                  if (!text || shouldIgnoreText(text)) {
-                    return false;
-                  }
-
-                  const rect = element.getBoundingClientRect();
-                  const markerRect = markerElement.getBoundingClientRect();
-                  const isBelowMarker =
-                    rect.top >= markerRect.bottom - 4 && rect.top <= markerRect.bottom + 220;
-                  const isRoughlyAligned =
-                    rect.left >= markerRect.left - 40 && rect.left <= markerRect.right + 80;
-                  const isReasonableBlock = rect.height > 0 && text.length >= 4 && text.length <= 160;
-
-                  return isBelowMarker && isRoughlyAligned && isReasonableBlock;
-                })
-                .map((element) => element.innerText)
-            : [];
-
-          const selectorTextCandidates = Array.from(
-            document.querySelectorAll<HTMLElement>([
-              'main [class*="desc"]',
-              'main [class*="intro"]',
-              'main [class*="bio"]',
-              'main [class*="profile"] p',
-              'main [class*="profile"] span',
-              'main [class*="info"] p',
-              'main [class*="info"] span',
-              'main [class*="user"] p',
-              'main [class*="user"] span',
-              'main div',
-            ].join(', ')),
-          ).map((element) => element.innerText);
-
-          const topAreaCandidates = Array.from(
-            document.querySelectorAll<HTMLElement>('main p, main span, main h1, main h2, main div'),
-          )
-            .filter((element) => {
-              const rect = element.getBoundingClientRect();
-              return rect.top >= 0 && rect.top <= 1200 && rect.height > 0;
-            })
-            .map((element) => element.innerText);
-
-          const treeWalker = document.createTreeWalker(
-            document.querySelector('main') ?? document.body,
-            NodeFilter.SHOW_TEXT,
-          );
-          const textNodeCandidates: string[] = [];
-          let currentNode = treeWalker.nextNode();
-          while (currentNode) {
-            const rawText = normalizeText(currentNode.textContent || '');
-            const parent = currentNode.parentElement;
-            const rect = parent?.getBoundingClientRect();
-
-            if (
-              rawText.length >= 2 &&
-              rawText.length <= 120 &&
-              rect &&
-              rect.top >= 0 &&
-              rect.top <= 950 &&
-              rect.height > 0 &&
-              !shouldIgnoreText(rawText)
-            ) {
-              textNodeCandidates.push(rawText);
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            findAnchors();
+            if (markerElement) {
+              break;
             }
-
-            currentNode = treeWalker.nextNode();
+            await wait(600);
           }
 
-          const firstScreenBlockCandidates = Array.from(
-            document.querySelectorAll<HTMLElement>('main section, main article, main div'),
-          )
-            .filter((element) => {
-              const rect = element.getBoundingClientRect();
-              if (rect.top < 0 || rect.top > 900 || rect.height < 40) {
-                return false;
+          const isStatsText = (text: string) =>
+            text.includes('关注') && text.includes('粉丝') && text.includes('获赞与收藏');
+
+          const collectReadableTexts = (element: HTMLElement, markerText: string) => {
+            const candidates = new Set<string>();
+            const directText = normalizeText(element.innerText || '');
+            if (
+              directText &&
+              directText !== markerText &&
+              !shouldIgnoreText(directText) &&
+              !isStatsText(directText) &&
+              directText.length >= 4 &&
+              directText.length <= 160
+            ) {
+              candidates.add(directText);
+            }
+
+            Array.from(element.querySelectorAll<HTMLElement>('p, span, div'))
+              .map((node) => normalizeText(node.innerText || ''))
+              .filter((text) => text.length >= 4 && text.length <= 160)
+              .filter((text) => text !== markerText)
+              .filter((text) => !shouldIgnoreText(text))
+              .filter((text) => !isStatsText(text))
+              .forEach((text) => {
+                candidates.add(text);
+              });
+
+            return Array.from(candidates);
+          };
+
+          const collectIntroFromMarker = () => {
+            if (!markerElement) {
+              return [];
+            }
+
+            const markerText = normalizeText(markerElement.innerText || '');
+            const markerRect = markerElement.getBoundingClientRect();
+            const statsRect = statsElement?.getBoundingClientRect();
+            const upperBound = markerRect.bottom - 8;
+            const lowerBound = statsRect
+              ? Math.min(statsRect.top - 8, markerRect.bottom + 240)
+              : markerRect.bottom + 240;
+            const candidates = new Set<string>();
+
+            let currentChild: HTMLElement | null = markerElement;
+            for (let level = 0; level < 4 && currentChild?.parentElement; level += 1) {
+              const parent = currentChild.parentElement as HTMLElement;
+              const siblings = Array.from(parent.children) as HTMLElement[];
+              const currentIndex = siblings.indexOf(currentChild);
+
+              for (let siblingIndex = currentIndex + 1; siblingIndex < siblings.length; siblingIndex += 1) {
+                const sibling = siblings[siblingIndex];
+                if (!sibling || sibling === statsElement) {
+                  break;
+                }
+
+                const siblingText = normalizeText(sibling.innerText || '');
+                if (!siblingText) {
+                  continue;
+                }
+
+                if (isStatsText(siblingText)) {
+                  break;
+                }
+
+                const rect = sibling.getBoundingClientRect();
+                const isBelowMarker = rect.top >= upperBound && rect.bottom <= lowerBound + 12;
+                const isAlignedToProfileColumn =
+                  rect.left >= markerRect.left - 48 && rect.left <= markerRect.right + 160;
+
+                if (!isBelowMarker || !isAlignedToProfileColumn) {
+                  continue;
+                }
+
+                collectReadableTexts(sibling, markerText).forEach((text) => {
+                  candidates.add(text);
+                });
               }
 
-              const text = normalizeText(element.innerText || '');
-              return text.length >= 8 && text.length <= 300;
-            })
-            .map((element) => element.innerText);
+              if (parent === mainElement) {
+                break;
+              }
 
-          const bodyLineCandidates = (document.body.innerText || '')
-            .split('\n')
-            .map(normalizeText)
-            .filter((text) => text.length >= 2 && text.length <= 80)
-            .filter((text) => !shouldIgnoreText(text))
-            .slice(0, 40);
+              currentChild = parent;
+            }
 
-          const summaryParts = [
-            ...targetedIntroCandidates,
-            ...metaCandidates,
-            ...selectorTextCandidates,
-            ...topAreaCandidates,
-            ...textNodeCandidates,
-            ...firstScreenBlockCandidates,
-            ...bodyLineCandidates,
+            Array.from(mainElement.querySelectorAll<HTMLElement>('p, span, div'))
+              .filter((element) => {
+                if (element === markerElement || element === statsElement) {
+                  return false;
+                }
+
+                const text = normalizeText(element.innerText || '');
+                if (!text || shouldIgnoreText(text) || isStatsText(text)) {
+                  return false;
+                }
+
+                const rect = element.getBoundingClientRect();
+                if (rect.height <= 0 || rect.width <= 0) {
+                  return false;
+                }
+
+                const isBelowMarker = rect.top >= upperBound && rect.bottom <= lowerBound + 12;
+                const isAlignedToProfileColumn =
+                  rect.left >= markerRect.left - 40 && rect.left <= markerRect.right + 120;
+                const isReadableLength = text.length >= 4 && text.length <= 120;
+                const isNotHugeBlock = rect.height <= 180;
+
+                return isBelowMarker && isAlignedToProfileColumn && isReadableLength && isNotHugeBlock;
+              })
+              .forEach((element) => {
+                collectReadableTexts(element, markerText).forEach((text) => {
+                  candidates.add(text);
+                });
+              });
+
+            return Array.from(candidates);
+          };
+
+          const collectLineRangeFromAncestor = () => {
+            if (!markerElement) {
+              return [];
+            }
+
+            let current: HTMLElement | null = markerElement;
+            for (let level = 0; level < 5 && current; level += 1) {
+              const textLines = (current.innerText || '')
+                .split('\n')
+                .map(normalizeText)
+                .filter(Boolean);
+              const markerIndex = textLines.findIndex((line) =>
+                line.includes('小红书号') || line.includes('IP属地'),
+              );
+              const statsIndex = textLines.findIndex((line) => isStatsText(line));
+
+              if (markerIndex >= 0) {
+                const betweenLines = textLines
+                  .slice(markerIndex + 1, statsIndex >= 0 ? statsIndex : undefined)
+                  .filter((line) => line.length >= 2 && line.length <= 120)
+                  .filter((line) => !shouldIgnoreText(line))
+                  .filter((line) => !isStatsText(line))
+                  .filter((line) => !line.includes('男') && !line.includes('女'));
+
+                if (betweenLines.length > 0) {
+                  return betweenLines;
+                }
+              }
+
+              current = current.parentElement;
+            }
+
+            return [];
+          };
+
+          const introLineCandidates = [
+            ...collectLineRangeFromAncestor(),
+            ...collectIntroFromMarker(),
+          ];
+
+          const compactMetaFallback = [
+            document.querySelector('meta[name="description"]')?.getAttribute('content') ?? '',
+            document.querySelector('meta[property="og:description"]')?.getAttribute('content') ?? '',
           ]
+            .map(normalizeText)
+            .filter((text) => text.length >= 2)
+            .filter((text) => !shouldIgnoreText(text));
+
+          const summaryParts = (
+            introLineCandidates.length > 0 ? introLineCandidates : markerElement ? [] : compactMetaFallback
+          )
             .map(normalizeText)
             .filter((text) => text.length >= 2)
             .filter((text) => !shouldIgnoreText(text));
@@ -365,7 +1070,16 @@ async function collectAuthorProfileSummariesSlowly(
       }
 
       if (index < candidates.length - 1) {
-        await delay(SECONDARY_COLLECT_DELAY_MS);
+        if (shouldStop?.()) {
+          break;
+        }
+        await delay(getRandomDelay(SECONDARY_COLLECT_DELAY_MIN_MS, SECONDARY_COLLECT_DELAY_MAX_MS));
+        if ((index + 1) % SECONDARY_COLLECT_BATCH_SIZE === 0) {
+          if (shouldStop?.()) {
+            break;
+          }
+          await delay(SECONDARY_COLLECT_BATCH_BREAK_MS);
+        }
       }
     }
   }
@@ -1053,14 +1767,16 @@ export function PopupApp() {
   const [tags, setTags] = useState<Tag[]>([]);
   const [loading, setLoading] = useState(false);
   const [activeScanSessionId, setActiveScanSessionId] = useState<string | null>(null);
+  const [isSecondaryCollectRunning, setIsSecondaryCollectRunning] = useState(false);
   const [selectedTagId, setSelectedTagId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState('');
   const [tagDraft, setTagDraft] = useState('');
   const [viewMode, setViewMode] = useState<ViewMode>('authors');
-  const [favoritesOnly, setFavoritesOnly] = useState(false);
+  const [tagEditorAuthorId, setTagEditorAuthorId] = useState<string | null>(null);
   const [activityLogs, setActivityLogs] = useState<string[]>([]);
   const [statusText, setStatusText] = useState('打开小红书搜索结果页，并勾选“已关注”筛选后开始扫描。');
   const [statusTone, setStatusTone] = useState<StatusTone>('idle');
+  const secondaryCollectStopRequestedRef = useRef(false);
 
   useEffect(() => {
     void refreshData();
@@ -1076,6 +1792,7 @@ export function PopupApp() {
         return;
       }
 
+      setStatusTone('info');
       setStatusText(
         `自动搜集中... 已滚动 ${message.round} 轮，累计识别 ${message.detectedProfiles} 位候选博主${
           message.usedScrollableContainer ? '，当前使用结果容器滚动。' : '，当前使用整页滚动。'
@@ -1090,7 +1807,7 @@ export function PopupApp() {
   }, [activeScanSessionId]);
 
   const filteredAuthors = authors.filter((author) => {
-    if (favoritesOnly && !author.favorite) {
+    if (viewMode === 'favorites' && !author.favorite) {
       return false;
     }
 
@@ -1107,12 +1824,11 @@ export function PopupApp() {
       author.tags.some((tag) => tag.toLowerCase().includes(query))
     );
   });
-  const favoriteAuthors = filteredAuthors.filter((author) => author.favorite);
   const untaggedAuthors = filteredAuthors.filter((author) => author.tags.length === 0);
   const recommendationTagPool = [...new Set([...tags.map((tag) => tag.name), ...DEFAULT_RECOMMENDATION_TAGS])];
   const normalizedTagMap = new Map(recommendationTagPool.map((tagName) => [tagName.toLowerCase(), tagName]));
   const groupedAuthors = [
-    ...(!favoritesOnly && untaggedAuthors.length > 0 ? [{ label: '未分类', authors: untaggedAuthors }] : []),
+    ...(untaggedAuthors.length > 0 ? [{ label: '未分类', authors: untaggedAuthors }] : []),
     ...tags
       .map((tag) => ({
         label: tag.name,
@@ -1120,9 +1836,15 @@ export function PopupApp() {
       }))
       .filter((group) => group.authors.length > 0),
   ];
-  const selectedTag = tags.find((tag) => tag.id === selectedTagId) ?? null;
+  const untaggedTagCount = authors.filter((author) => author.tags.length === 0).length;
+  const selectedTag =
+    selectedTagId === UNTAGGED_TAG_ID
+      ? { id: UNTAGGED_TAG_ID, name: UNTAGGED_TAG_NAME }
+      : (tags.find((tag) => tag.id === selectedTagId) ?? null);
   const selectedTagAuthors = selectedTag
-    ? authors.filter((author) => author.tags.includes(selectedTag.name))
+    ? selectedTag.id === UNTAGGED_TAG_ID
+      ? authors.filter((author) => author.tags.length === 0)
+      : authors.filter((author) => author.tags.includes(selectedTag.name))
     : [];
 
   function pushLog(message: string) {
@@ -1132,7 +1854,6 @@ export function PopupApp() {
   function getTagScoreDetails(author: Author) {
     const nicknameText = author.nickname.toLowerCase().replace(/\s+/g, ' ');
     const summaryText = (author.profile_summary ?? '').toLowerCase().replace(/\s+/g, ' ');
-    const noteText = (author.note ?? '').toLowerCase().replace(/\s+/g, ' ');
     const urlText = author.profile_url.toLowerCase().replace(/\s+/g, ' ');
     const summaryParts = (author.profile_summary ?? '')
       .split(/\s*[|｜]\s*/)
@@ -1160,11 +1881,6 @@ export function PopupApp() {
             (NICKNAME_WEAK_KEYWORDS[tagName] ?? []).includes(normalizedKeyword);
           const isTagNameMatch = normalizedKeyword === tagName.toLowerCase();
 
-          if (noteText.includes(normalizedKeyword)) {
-            score += isTagNameMatch ? 4 : 3;
-            hits.push(`备注:${keyword}`);
-          }
-
           if (summaryText.includes(normalizedKeyword)) {
             score += isTagNameMatch ? 3 : 2;
             hits.push(`摘要:${keyword}`);
@@ -1189,7 +1905,7 @@ export function PopupApp() {
         for (const [normalizedTagName, originalTagName] of normalizedTagMap.entries()) {
           if (
             originalTagName !== tagName &&
-            (summaryText.includes(normalizedTagName) || noteText.includes(normalizedTagName)) &&
+            summaryText.includes(normalizedTagName) &&
             normalizedTagName.includes(tagName.toLowerCase())
           ) {
             score += 1;
@@ -1200,10 +1916,7 @@ export function PopupApp() {
         // Only use fuzzy matching for custom tags to avoid default-tag false positives.
         if (!DEFAULT_TAG_NAME_SET.has(tagName)) {
           for (const segment of getTwoCharSegments(tagName.toLowerCase())) {
-            if (
-              segment.length >= 2 &&
-              (summaryText.includes(segment) || noteText.includes(segment))
-            ) {
+            if (segment.length >= 2 && summaryText.includes(segment)) {
               score += 0.5;
             }
           }
@@ -1225,7 +1938,7 @@ export function PopupApp() {
   function getRecommendedTags(author: Author): string[] {
     const scoredRecommendations = getTagScoreDetails(author)
       .filter((item) => item.score >= item.threshold && !author.tags.includes(item.tagName))
-      .slice(0, Math.min(1, Math.max(0, 5 - author.tags.length)))
+      .slice(0, 1)
       .map((item) => item.tagName);
 
     return scoredRecommendations;
@@ -1262,13 +1975,19 @@ export function PopupApp() {
 
   async function refreshData() {
     const [nextAuthors, nextTags] = await Promise.all([storage.getAuthors(), storage.getTags()]);
+    const nextUntaggedCount = nextAuthors.filter((author) => author.tags.length === 0).length;
     setAuthors(nextAuthors);
     setTags(nextTags);
     setSelectedTagId((current) => {
       if (!current) {
-        return nextTags[0]?.id ?? null;
+        return nextUntaggedCount > 0 ? UNTAGGED_TAG_ID : (nextTags[0]?.id ?? null);
       }
-      return nextTags.some((tag) => tag.id === current) ? current : (nextTags[0]?.id ?? null);
+      if (current === UNTAGGED_TAG_ID) {
+        return nextUntaggedCount > 0 ? UNTAGGED_TAG_ID : (nextTags[0]?.id ?? null);
+      }
+      return nextTags.some((tag) => tag.id === current)
+        ? current
+        : (nextUntaggedCount > 0 ? UNTAGGED_TAG_ID : (nextTags[0]?.id ?? null));
     });
   }
 
@@ -1276,7 +1995,7 @@ export function PopupApp() {
     const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     setLoading(true);
     setActiveScanSessionId(sessionId);
-    setStatusTone('idle');
+    setStatusTone('info');
     setStatusText(
       mode === 'auto'
         ? '插件正在自动滚动搜索结果页并持续搜集，请暂时不要切换标签页...'
@@ -1333,13 +2052,24 @@ export function PopupApp() {
 
     try {
       await stopScanInActivePage(activeScanSessionId);
-      setStatusTone('idle');
+      setStatusTone('info');
       setStatusText('已发送停止指令，正在结束当前自动滚动搜集并保留已抓到的结果...');
       pushLog('自动搜集：已发送停止指令，正在等待当前轮次结束。');
     } catch (error) {
       setStatusTone('error');
       setStatusText(error instanceof Error ? error.message : '停止自动滚动失败，请稍后重试。');
     }
+  }
+
+  function handleStopSecondaryCollect() {
+    if (!isSecondaryCollectRunning) {
+      return;
+    }
+
+    secondaryCollectStopRequestedRef.current = true;
+    setStatusTone('info');
+    setStatusText('已发送停止指令，正在结束当前二次搜集并保留已补充的资料...');
+    pushLog('二次搜集：已发送停止指令，正在等待当前轮次结束。');
   }
 
   async function handleCreateTag() {
@@ -1380,8 +2110,8 @@ export function PopupApp() {
 
   async function handleToggleTag(author: Author, tagName: string) {
     try {
-      const nextAuthors = await storage.toggleAuthorTag(author.user_id, tagName);
-      setAuthors(nextAuthors);
+      await storage.toggleAuthorTag(author.user_id, tagName);
+      await refreshData();
       setStatusTone('success');
       setStatusText(
         author.tags.includes(tagName)
@@ -1402,6 +2132,98 @@ export function PopupApp() {
       author.favorite
         ? `已取消收藏 ${author.nickname}。`
         : `已收藏 ${author.nickname}，后续可以在“收藏”分组里快速找到。`,
+    );
+  }
+
+  async function handleDeleteAuthor(author: Author) {
+    const confirmed = window.confirm(`确认将 ${author.nickname} 从插件入库列表中删除吗？`);
+    if (!confirmed) {
+      return;
+    }
+
+    await storage.deleteAuthor(author.user_id);
+    if (tagEditorAuthorId === author.user_id) {
+      setTagEditorAuthorId(null);
+    }
+    await refreshData();
+    setStatusTone('success');
+    setStatusText(`已将 ${author.nickname} 从入库博主中删除。`);
+    pushLog(`入库博主：已删除 ${author.nickname}。`);
+  }
+
+  function toggleTagEditor(authorId: string) {
+    setTagEditorAuthorId((current) => (current === authorId ? null : authorId));
+  }
+
+  function renderAuthorTagEditor(author: Author) {
+    const isEditing = tagEditorAuthorId === author.user_id;
+    const availableTagPool = recommendationTagPool;
+    const alignClass = author.avatar_url ? 'ml-[52px]' : '';
+
+    return (
+      <div className={alignClass}>
+        <div className="flex flex-wrap items-center gap-2">
+          {author.tags.length > 0 ? (
+            author.tags.map((tagName) => (
+              <button
+                key={`${author.user_id}-${tagName}`}
+                type="button"
+                onClick={() => toggleTagEditor(author.user_id)}
+                className={[
+                  'rounded-full px-2 py-1 text-[11px] transition',
+                  isEditing
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+                ].join(' ')}
+              >
+                {tagName}
+              </button>
+            ))
+          ) : (
+            <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-600">未分类</span>
+          )}
+          <button
+            type="button"
+            onClick={() => toggleTagEditor(author.user_id)}
+            className="rounded-full border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 transition hover:border-slate-300 hover:bg-slate-50"
+          >
+            ＋
+          </button>
+        </div>
+
+        {isEditing ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {availableTagPool.length === 0 ? (
+              <span className="text-xs text-slate-400">暂无可用标签</span>
+            ) : (
+              availableTagPool.map((tagName) => {
+                const isSelected = author.tags.includes(tagName);
+                const isDisabled = !isSelected && author.tags.length >= 2;
+
+                return (
+                  <button
+                    key={`${author.user_id}-picker-${tagName}`}
+                    type="button"
+                    onClick={() => handleToggleTag(author, tagName)}
+                    disabled={isDisabled}
+                    className={[
+                      'rounded-full border px-2.5 py-1 text-xs transition',
+                      isSelected
+                        ? 'border-slate-900 bg-slate-900 text-white'
+                        : 'border-slate-200 bg-white text-slate-600 hover:border-slate-300',
+                      isDisabled && 'cursor-not-allowed border-slate-200 bg-slate-100 text-slate-400 hover:border-slate-200',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
+                    {tagName}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        ) : null}
+      </div>
     );
   }
 
@@ -1488,10 +2310,6 @@ export function PopupApp() {
     }
   }
 
-  function handleToggleFavoritesOnly() {
-    setFavoritesOnly((current) => !current);
-  }
-
   async function handleSecondaryCollect() {
     const candidates = authors.filter((author) => author.tags.length === 0);
     if (candidates.length === 0) {
@@ -1506,6 +2324,8 @@ export function PopupApp() {
     );
 
     setLoading(true);
+    setIsSecondaryCollectRunning(true);
+    secondaryCollectStopRequestedRef.current = false;
     setStatusTone('idle');
     setStatusText('正在慢速二次搜集：逐个打开博主主页补抓资料...');
     pushLog(
@@ -1522,6 +2342,7 @@ export function PopupApp() {
             `正在慢速二次搜集 ${finished + 1}/${total}：${nickname}。每位博主之间会额外等待几秒。`,
           );
         },
+        () => secondaryCollectStopRequestedRef.current,
       );
       if (updates.length === 0) {
         pushLog('二次搜集：这轮没有返回任何可用抓取结果。');
@@ -1548,6 +2369,17 @@ export function PopupApp() {
           }。原始文本：${update.raw_lines?.slice(0, 6).join(' / ') || '无'}`,
         );
       }
+
+      if (secondaryCollectStopRequestedRef.current) {
+        const nextTags = await storage.getTags();
+        setTags(nextTags);
+        setAuthors(nextAuthors);
+        setStatusTone('success');
+        setStatusText(`二次搜集已手动停止，已先保留 ${updates.length} 位博主本轮补充到的资料。`);
+        pushLog(`二次搜集结束：用户手动停止，本轮保留了 ${updates.length} 位博主的补充资料。`);
+        return;
+      }
+
       const generatedTagCandidates = getAutoGeneratedTagCandidates(nextAuthors);
       if (generatedTagCandidates.length > 0) {
         pushLog(
@@ -1608,6 +2440,8 @@ export function PopupApp() {
       setStatusText(error instanceof Error ? error.message : '二次搜集失败，请稍后重试。');
       pushLog(`二次搜集失败：${error instanceof Error ? error.message : '未知错误'}`);
     } finally {
+      secondaryCollectStopRequestedRef.current = false;
+      setIsSecondaryCollectRunning(false);
       setLoading(false);
     }
   }
@@ -1618,70 +2452,111 @@ export function PopupApp() {
   }
 
   return (
-    <main className="w-[380px] bg-[radial-gradient(circle_at_top,_rgba(254,226,226,0.9),_rgba(255,255,255,1)_50%)] p-4 text-slate-900">
+    <main className="w-[472px] bg-[radial-gradient(circle_at_top,_rgba(254,226,226,0.9),_rgba(255,255,255,1)_50%)] p-5 text-slate-900">
       <section className="rounded-3xl bg-white/90 p-4 shadow-panel ring-1 ring-slate-200">
-        <div className="mb-4">
-          <p className="text-xs font-semibold uppercase tracking-[0.24em] text-red-500">
-            XHS Following Manager
-          </p>
-          <h1 className="mt-2 text-2xl font-semibold text-slate-900">小红书关注整理助手</h1>
-          <p className="mt-2 text-xs leading-5 text-slate-500">
-            搜索结果很多时，优先点“自动滚动搜集”，插件会自己向下加载直到页面内容稳定。
-          </p>
-        </div>
+        {viewMode === 'authors' ? (
+          <>
+            <div className="mb-4">
+              <p className="text-xs font-semibold uppercase tracking-[0.24em] text-red-500">
+                XHS Following Manager
+              </p>
+              <h1 className="mt-2 text-2xl font-semibold text-slate-900">小红书关注整理助手</h1>
+              <p className="mt-2 text-xs leading-5 text-slate-500">
+                打开小红书搜索结果页，并勾选“已关注”筛选后开始扫描。
+              </p>
+            </div>
 
-        <div className="grid grid-cols-3 gap-2">
-          <button
-            type="button"
-            onClick={() => handleScanClick('page')}
-            disabled={loading}
-            className="rounded-2xl bg-brand px-4 py-3 text-sm font-medium text-white transition hover:bg-brand-dark disabled:cursor-not-allowed disabled:bg-slate-300"
-          >
-            {loading ? '处理中...' : '扫描当前页'}
-          </button>
-          <button
-            type="button"
-            onClick={() => handleScanClick('auto')}
-            disabled={loading}
-            className="rounded-2xl bg-slate-900 px-4 py-3 text-sm font-medium text-white transition hover:bg-slate-800 disabled:cursor-not-allowed disabled:bg-slate-300"
-          >
-            {loading ? '处理中...' : '自动滚动搜集'}
-          </button>
-          <button
-            type="button"
-            onClick={() => setViewMode(viewMode === 'authors' ? 'tags' : 'authors')}
-            className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
-          >
-            {viewMode === 'authors' ? '管理标签' : '返回博主列表'}
-          </button>
-        </div>
-
-        {loading && activeScanSessionId ? (
-          <div className="mt-2 flex justify-end">
+            <div className="border-b border-slate-200 pb-4">
+          <div className="flex items-center justify-end gap-2">
+            <div className="flex items-center gap-2">
+              {loading && activeScanSessionId ? (
+                <button
+                  type="button"
+                  onClick={handleStopAutoScan}
+                  className="rounded-full border border-amber-200 bg-white px-3 py-1.5 text-xs font-medium text-amber-700 shadow-sm transition hover:bg-amber-50"
+                >
+                  停止滚动
+                </button>
+              ) : null}
+              {isSecondaryCollectRunning ? (
+                <button
+                  type="button"
+                  onClick={handleStopSecondaryCollect}
+                  className="rounded-full border border-sky-200 bg-white px-3 py-1.5 text-xs font-medium text-sky-700 shadow-sm transition hover:bg-sky-50"
+                >
+                  停止搜集
+                </button>
+              ) : null}
+            </div>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
             <button
               type="button"
-              onClick={handleStopAutoScan}
-              className="rounded-full bg-amber-50 px-3 py-1.5 text-xs font-medium text-amber-800 transition hover:bg-amber-100"
+              onClick={() => handleScanClick('page')}
+              disabled={loading}
+              className="rounded-[20px] border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:-translate-y-[1px] hover:border-red-200 hover:bg-red-50/60 hover:text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
             >
-              停止滚动
+              {loading ? '处理中...' : '扫描当前页'}
             </button>
+            <button
+              type="button"
+              onClick={() => handleScanClick('auto')}
+              disabled={loading}
+              className="rounded-[20px] bg-[linear-gradient(135deg,#0f172a_0%,#1e293b_100%)] px-3 py-3 text-sm font-semibold text-white shadow-[0_8px_20px_rgba(15,23,42,0.14)] transition hover:-translate-y-[1px] hover:brightness-105 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {loading ? '处理中...' : '自动滚动搜集'}
+            </button>
+            <button
+              type="button"
+              onClick={handleSecondaryCollect}
+              disabled={loading || authors.filter((author) => author.tags.length === 0).length === 0}
+              className="rounded-[20px] border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:-translate-y-[1px] hover:border-red-200 hover:bg-red-50/60 hover:text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+            >
+              二次搜集
+            </button>
+          </div>
+          <div className="mt-3 grid grid-cols-3 gap-2">
+            <button
+              type="button"
+              onClick={() => setViewMode('tags')}
+              className="rounded-[18px] border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              标签
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('favorites')}
+              className="rounded-[18px] border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:border-slate-300 hover:bg-slate-50"
+            >
+              收藏夹
+            </button>
+            <button
+              type="button"
+              onClick={handleClearAuthors}
+              disabled={loading || authors.length === 0}
+              className="rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+            >
+              清空入库博主
+            </button>
+          </div>
+        </div>
+
+        {statusTone !== 'idle' ? (
+          <div
+            className={[
+              'mt-3 rounded-2xl px-3 py-2 text-sm',
+              statusTone === 'info' && 'bg-emerald-50 text-emerald-700',
+              statusTone === 'success' && 'bg-emerald-50 text-emerald-700',
+              statusTone === 'error' && 'bg-rose-50 text-rose-700',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+          >
+            {statusText}
           </div>
         ) : null}
 
-        <div
-          className={[
-            'mt-3 rounded-2xl px-3 py-2 text-sm',
-            statusTone === 'success' && 'bg-emerald-50 text-emerald-700',
-            statusTone === 'error' && 'bg-rose-50 text-rose-700',
-            statusTone === 'idle' && 'bg-slate-100 text-slate-600',
-          ]
-            .filter(Boolean)
-            .join(' ')}
-        >
-          {statusText}
-        </div>
-
-        <div className="mt-3 rounded-2xl bg-slate-50 px-3 py-3 text-xs text-slate-600 ring-1 ring-slate-200">
+        <div className="mt-4 border-t border-slate-200 pt-3 text-xs text-slate-600">
           <div className="flex items-center justify-between gap-3">
             <p className="font-semibold text-slate-700">运行日志</p>
             <span className="text-slate-400">最近 {activityLogs.length} 条</span>
@@ -1689,7 +2564,7 @@ export function PopupApp() {
           {activityLogs.length === 0 ? (
             <p className="mt-2 leading-5 text-slate-500">还没有日志。开始扫描、自动分类或二次搜集后，这里会显示命中原因。</p>
           ) : (
-            <div className="mt-2 max-h-[140px] space-y-2 overflow-y-auto pr-1">
+            <div className="mt-2 space-y-2">
               {activityLogs.map((log, index) => (
                 <p key={`${index}-${log.slice(0, 12)}`} className="leading-5 text-slate-700">
                   {log}
@@ -1698,64 +2573,40 @@ export function PopupApp() {
             </div>
           )}
         </div>
-
-        <div className="mt-4 flex items-end justify-between rounded-2xl bg-slate-900 px-4 py-3 text-white">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">已入库博主</p>
-            <p className="mt-1 text-3xl font-semibold">{authors.length}</p>
-          </div>
-          <div className="text-right">
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-400">已收藏</p>
-            <p className="mt-1 text-2xl font-semibold">{authors.filter((author) => author.favorite).length}</p>
-          </div>
-        </div>
-
-        <div className="mt-2 flex justify-end">
-          <div className="flex flex-wrap gap-2">
+          </>
+        ) : (
+          <div className="relative mb-4 flex items-center justify-center">
             <button
               type="button"
-              onClick={handleToggleFavoritesOnly}
-              disabled={viewMode !== 'authors'}
-              className={[
-                'rounded-full px-3 py-1.5 text-xs font-medium transition',
-                favoritesOnly
-                  ? 'bg-amber-100 text-amber-800 hover:bg-amber-200'
-                  : 'bg-slate-100 text-slate-700 hover:bg-slate-200',
-                viewMode !== 'authors' && 'cursor-not-allowed bg-slate-100 text-slate-400',
-              ]
-                .filter(Boolean)
-                .join(' ')}
+              onClick={() => setViewMode('authors')}
+              className="absolute left-0 rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 transition hover:border-slate-300 hover:bg-slate-50"
             >
-              {favoritesOnly ? '返回全部' : '收藏夹'}
+              返回
             </button>
-            <button
-              type="button"
-              onClick={handleSecondaryCollect}
-              disabled={loading || authors.filter((author) => author.tags.length === 0).length === 0}
-              className="rounded-full bg-violet-50 px-3 py-1.5 text-xs font-medium text-violet-700 transition hover:bg-violet-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-            >
-              二次搜集
-            </button>
-            <button
-              type="button"
-              onClick={handleClearAuthors}
-              disabled={loading || authors.length === 0}
-              className="rounded-full bg-rose-50 px-3 py-1.5 text-xs font-medium text-rose-700 transition hover:bg-rose-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
-            >
-              清空入库博主
-            </button>
+            <h1 className="text-2xl font-semibold text-slate-900">
+              {viewMode === 'tags' ? '标签管理' : '收藏夹'}
+            </h1>
           </div>
-        </div>
+        )}
 
-        {viewMode === 'authors' ? (
+        {viewMode === 'authors' || viewMode === 'favorites' ? (
           <section className="mt-4">
             <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-sm font-semibold text-slate-900">
-                {favoritesOnly ? '收藏夹' : '已搜集博主'}
-              </h2>
-              <span className="text-xs text-slate-500">
-                {authors.filter((author) => author.tags.length > 0).length} 位已自动分类
-              </span>
+              <div className="flex items-center gap-2">
+                <h2 className="text-sm font-semibold text-slate-900">
+                  {viewMode === 'favorites' ? '收藏博主' : '已搜集博主'}
+                </h2>
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-500">
+                  {viewMode === 'favorites'
+                    ? `${authors.filter((author) => author.favorite).length} 位收藏`
+                    : `${authors.length} 位`}
+                </span>
+              </div>
+              {viewMode === 'authors' ? (
+                <span className="text-xs text-slate-500">
+                  {authors.filter((author) => author.tags.length > 0).length} 位已自动分类
+                </span>
+              ) : null}
             </div>
 
             <input
@@ -1777,10 +2628,10 @@ export function PopupApp() {
               </div>
             ) : groupedAuthors.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
-                {favoritesOnly ? '收藏夹里还没有已打标签的博主。' : '没有匹配到相关博主，试试别的关键词。'}
+                {viewMode === 'favorites' ? '收藏夹里还没有博主。' : '没有匹配到相关博主，试试别的关键词。'}
               </div>
             ) : (
-              <div className="max-h-[360px] space-y-4 overflow-y-auto pr-1">
+              <div className="space-y-4">
                 {groupedAuthors.map((group) => (
                   <div key={group.label}>
                     <div className="mb-2 flex items-center justify-between">
@@ -1794,8 +2645,17 @@ export function PopupApp() {
                       {group.authors.map((author) => (
                         <li
                           key={author.user_id}
-                          className="rounded-2xl border border-slate-200 px-3 py-3"
+                          className="relative rounded-2xl border border-slate-200 px-3 py-3"
                         >
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteAuthor(author)}
+                            aria-label="删除入库博主"
+                            title="删除入库博主"
+                            className="absolute -left-1.5 -top-1.5 z-10 h-6 w-6 rounded-full border border-slate-200 bg-white text-xs leading-none text-slate-400 shadow-sm transition hover:border-red-200 hover:bg-red-50 hover:text-red-500"
+                          >
+                            ×
+                          </button>
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0 flex-1">
                               <div className="flex items-start gap-3">
@@ -1847,30 +2707,10 @@ export function PopupApp() {
                               >
                                 {author.favorite ? '★' : '☆'}
                               </button>
-                              <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-600">
-                                {author.tags[0] ?? '未分类'}
-                              </span>
                             </div>
                           </div>
 
-                          {author.tags.length === 0 ? (
-                            <div className="mt-3 flex flex-wrap gap-2">
-                              {recommendationTagPool.length === 0 ? (
-                                <span className="text-xs text-slate-400">暂无可用标签</span>
-                              ) : (
-                                tags.map((tag) => (
-                                  <button
-                                    key={tag.id}
-                                    type="button"
-                                    onClick={() => handleToggleTag(author, tag.name)}
-                                    className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-xs text-slate-600 transition hover:border-slate-300"
-                                  >
-                                    {tag.name}
-                                  </button>
-                                ))
-                              )}
-                            </div>
-                          ) : null}
+                          <div className="mt-3">{renderAuthorTagEditor(author)}</div>
 
                           <div className="mt-3">
                             <textarea
@@ -1892,8 +2732,7 @@ export function PopupApp() {
         ) : (
           <section className="mt-4">
             <div className="mb-3">
-              <h2 className="text-sm font-semibold text-slate-900">标签管理</h2>
-              <p className="mt-1 text-xs leading-5 text-slate-500">
+              <p className="text-xs leading-5 text-slate-500">
                 标签上限 20 个，删除标签会同步清除博主身上的对应标记。点击标签卡片可查看该标签下的博主。
               </p>
             </div>
@@ -1915,42 +2754,75 @@ export function PopupApp() {
               </button>
             </div>
 
-            <div className="mt-4 max-h-[360px] space-y-2 overflow-y-auto pr-1">
-              {tags.length === 0 ? (
+            <div className="mt-4">
+              {tags.length === 0 && untaggedTagCount === 0 ? (
                 <div className="rounded-2xl border border-dashed border-slate-300 px-4 py-6 text-center text-sm text-slate-500">
                   还没有手动创建的标签。你可以直接新建，也可以先去博主列表接受系统推荐标签。
                 </div>
               ) : (
-                tags.map((tag) => {
-                  const taggedCount = authors.filter((author) => author.tags.includes(tag.name)).length;
-                  return (
+                <>
+                  <div className="grid grid-cols-3 gap-2">
+                    {tags.map((tag) => {
+                      const taggedCount = authors.filter((author) => author.tags.includes(tag.name)).length;
+
+                      return (
+                        <div
+                          key={tag.id}
+                          className={[
+                            'relative rounded-[20px] border px-2.5 py-2.5 transition',
+                            selectedTagId === tag.id
+                              ? 'border-red-200 bg-red-50'
+                              : 'border-slate-200 bg-white hover:border-slate-300',
+                          ].join(' ')}
+                        >
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteTag(tag.id)}
+                            aria-label={`删除标签 ${tag.name}`}
+                            title={`删除标签 ${tag.name}`}
+                            className="absolute right-2 top-2 h-5 w-5 rounded-full bg-slate-100 text-[10px] leading-none text-slate-500 transition hover:bg-slate-200"
+                          >
+                            ×
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setSelectedTagId(tag.id)}
+                            className="w-full text-left"
+                          >
+                            <div className="flex items-center gap-1.5 pr-5">
+                              <span className="text-base leading-none">{getTagDisplayIcon(tag.name)}</span>
+                              <p className="truncate text-sm font-medium text-slate-900">{tag.name}</p>
+                            </div>
+                            <p className="mt-2 text-xs text-slate-500">{taggedCount}</p>
+                          </button>
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {untaggedTagCount > 0 ? (
                     <div
-                      key={tag.id}
                       className={[
-                        'flex items-center justify-between rounded-2xl border px-3 py-3 transition',
-                        selectedTagId === tag.id
+                        'mt-2 rounded-[20px] border px-3 py-3 transition',
+                        selectedTagId === UNTAGGED_TAG_ID
                           ? 'border-red-200 bg-red-50'
                           : 'border-slate-200 bg-white hover:border-slate-300',
                       ].join(' ')}
                     >
                       <button
                         type="button"
-                        onClick={() => setSelectedTagId(tag.id)}
-                        className="min-w-0 flex-1 text-left"
+                        onClick={() => setSelectedTagId(UNTAGGED_TAG_ID)}
+                        className="w-full text-left"
                       >
-                        <p className="text-sm font-medium text-slate-900">{tag.name}</p>
-                        <p className="mt-1 text-xs text-slate-500">{taggedCount} 位博主已打标</p>
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleDeleteTag(tag.id)}
-                        className="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600 transition hover:bg-slate-200"
-                      >
-                        删除
+                        <div className="flex items-center gap-2">
+                          <span className="text-base leading-none">{getTagDisplayIcon(UNTAGGED_TAG_NAME)}</span>
+                          <p className="text-sm font-medium text-slate-900">{UNTAGGED_TAG_NAME}</p>
+                        </div>
+                        <p className="mt-1 text-xs text-slate-500">{untaggedTagCount} 位博主未打标</p>
                       </button>
                     </div>
-                  );
-                })
+                  ) : null}
+                </>
               )}
             </div>
 
@@ -1973,12 +2845,21 @@ export function PopupApp() {
                   这个标签下还没有博主。
                 </div>
               ) : (
-                <div className="max-h-[240px] space-y-2 overflow-y-auto pr-1">
+                <div className="space-y-2">
                   {selectedTagAuthors.map((author) => (
                     <div
                       key={author.user_id}
-                      className="rounded-2xl border border-slate-200 px-3 py-3"
+                      className="relative rounded-2xl border border-slate-200 px-3 py-3"
                     >
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteAuthor(author)}
+                          aria-label="删除入库博主"
+                          title="删除入库博主"
+                          className="absolute -left-1.5 -top-1.5 z-10 h-6 w-6 rounded-full border border-slate-200 bg-white text-xs leading-none text-slate-400 shadow-sm transition hover:border-red-200 hover:bg-red-50 hover:text-red-500"
+                        >
+                          ×
+                        </button>
                         <div className="flex items-start justify-between gap-3">
                           <div className="min-w-0 flex-1">
                             <div className="flex items-start gap-3">
@@ -2030,11 +2911,10 @@ export function PopupApp() {
                             >
                               {author.favorite ? '★' : '☆'}
                             </button>
-                            <span className="shrink-0 rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-600">
-                              {author.tags[0] ?? '未分类'}
-                            </span>
                           </div>
                         </div>
+
+                        <div className="mt-3">{renderAuthorTagEditor(author)}</div>
 
                         <div className="mt-3">
                           <textarea

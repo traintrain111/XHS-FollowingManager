@@ -1,8 +1,8 @@
 (function(){const d="xhs-following-manager-root",c="xhs_following_manager_panel_hidden";h();let l=!1;async function h(){m(),await u()}async function u(){if(document.getElementById(d))return;const t=await b(),n=document.createElement("div");n.id=d,n.style.all="initial",n.style.position="fixed",n.style.top="56px",n.style.right="8px",n.style.zIndex="2147483647";const r=n.attachShadow({mode:"open"}),s=document.createElement("style");s.textContent=`
     .panel-shell {
       position: relative;
-      width: 404px;
-      height: min(84vh, 760px);
+      width: 496px;
+      height: min(88vh, 820px);
       border-radius: 28px;
       overflow: hidden;
       box-shadow: 0 18px 50px rgba(15, 23, 42, 0.22);
