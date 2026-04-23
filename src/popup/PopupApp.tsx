@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react';
 import { storage } from '../shared/storage';
 import { XHS_HOST } from '../shared/constants';
 import type { Author, Tag } from '../shared/types';
@@ -654,6 +654,86 @@ const TAG_DISPLAY_ICONS: Record<string, string> = {
 
 function getTagDisplayIcon(tagName: string) {
   return TAG_DISPLAY_ICONS[tagName] ?? '🏷️';
+}
+
+function IconBase({
+  className,
+  children,
+}: {
+  className?: string;
+  children: ReactNode;
+}) {
+  return (
+    <svg
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="1.8"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      className={className}
+      aria-hidden="true"
+    >
+      {children}
+    </svg>
+  );
+}
+
+function ScanLineIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <circle cx="11" cy="11" r="6.5" />
+      <path d="M16 16l4.5 4.5" />
+    </IconBase>
+  );
+}
+
+function ScrollCollectIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M12 4v11" />
+      <path d="M8.5 11.5L12 15l3.5-3.5" />
+      <path d="M7 19h10" />
+    </IconBase>
+  );
+}
+
+function ProfileFetchIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <circle cx="12" cy="8" r="3.2" />
+      <path d="M5.5 18.5c1.8-3 4.2-4.5 6.5-4.5s4.7 1.5 6.5 4.5" />
+    </IconBase>
+  );
+}
+
+function TagLineIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M4 12V7.5A1.5 1.5 0 015.5 6H13l6 6-7.5 7.5L4 12z" />
+      <circle cx="8.2" cy="9.2" r="1.1" />
+    </IconBase>
+  );
+}
+
+function BookmarkLineIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M7 5.5h10a1 1 0 011 1v12l-6-3.8-6 3.8v-12a1 1 0 011-1z" />
+    </IconBase>
+  );
+}
+
+function TrashLineIcon({ className }: { className?: string }) {
+  return (
+    <IconBase className={className}>
+      <path d="M4.5 7h15" />
+      <path d="M9 4.5h6" />
+      <path d="M7 7l1 11h8l1-11" />
+      <path d="M10 10.5v5" />
+      <path d="M14 10.5v5" />
+    </IconBase>
+  );
 }
 
 function cleanNicknameText(rawText: string): string {
@@ -2180,7 +2260,18 @@ export function PopupApp() {
               </button>
             ))
           ) : (
-            <span className="rounded-full bg-slate-100 px-2 py-1 text-[11px] text-slate-600">未分类</span>
+            <button
+              type="button"
+              onClick={() => toggleTagEditor(author.user_id)}
+              className={[
+                'rounded-full px-2 py-1 text-[11px] transition',
+                isEditing
+                  ? 'bg-slate-900 text-white'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200',
+              ].join(' ')}
+            >
+              未分类
+            </button>
           )}
           <button
             type="button"
@@ -2494,7 +2585,7 @@ export function PopupApp() {
               type="button"
               onClick={() => handleScanClick('page')}
               disabled={loading}
-              className="rounded-[20px] border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:-translate-y-[1px] hover:border-red-200 hover:bg-red-50/60 hover:text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              className="rounded-[20px] border-2 border-[#ffd6dd] bg-white px-3 py-3 text-sm font-semibold text-slate-700 shadow-[0_4px_12px_rgba(255,36,66,0.06)] transition hover:-translate-y-[1px] hover:border-[#ff9fb0] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
             >
               {loading ? '处理中...' : '扫描当前页'}
             </button>
@@ -2502,7 +2593,7 @@ export function PopupApp() {
               type="button"
               onClick={() => handleScanClick('auto')}
               disabled={loading}
-              className="rounded-[20px] bg-[linear-gradient(135deg,#0f172a_0%,#1e293b_100%)] px-3 py-3 text-sm font-semibold text-white shadow-[0_8px_20px_rgba(15,23,42,0.14)] transition hover:-translate-y-[1px] hover:brightness-105 disabled:cursor-not-allowed disabled:bg-slate-300"
+              className="rounded-[20px] border-2 border-[#ffd6dd] bg-white px-3 py-3 text-sm font-semibold text-slate-700 shadow-[0_4px_12px_rgba(255,36,66,0.06)] transition hover:-translate-y-[1px] hover:border-[#ff9fb0] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
             >
               {loading ? '处理中...' : '自动滚动搜集'}
             </button>
@@ -2510,7 +2601,7 @@ export function PopupApp() {
               type="button"
               onClick={handleSecondaryCollect}
               disabled={loading || authors.filter((author) => author.tags.length === 0).length === 0}
-              className="rounded-[20px] border border-slate-200 bg-white px-3 py-3 text-sm font-semibold text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.05)] transition hover:-translate-y-[1px] hover:border-red-200 hover:bg-red-50/60 hover:text-slate-900 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              className="rounded-[20px] border-2 border-[#ffd6dd] bg-white px-3 py-3 text-sm font-semibold text-slate-700 shadow-[0_4px_12px_rgba(255,36,66,0.06)] transition hover:-translate-y-[1px] hover:border-[#ff9fb0] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
             >
               二次搜集
             </button>
@@ -2519,23 +2610,26 @@ export function PopupApp() {
             <button
               type="button"
               onClick={() => setViewMode('tags')}
-              className="rounded-[18px] border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:border-slate-300 hover:bg-slate-50"
+              className="flex items-center justify-center gap-2 rounded-[18px] border border-[#ffd6dd] bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_2px_8px_rgba(255,36,66,0.05)] transition hover:border-[#ffb8c4] hover:bg-[#fff8fa] hover:text-[#ff2442]"
             >
+              <TagLineIcon className="h-4 w-4 text-[#ff6b81]" />
               标签
             </button>
             <button
               type="button"
               onClick={() => setViewMode('favorites')}
-              className="rounded-[18px] border border-slate-200 bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:border-slate-300 hover:bg-slate-50"
+              className="flex items-center justify-center gap-2 rounded-[18px] border border-[#ffd6dd] bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_2px_8px_rgba(255,36,66,0.05)] transition hover:border-[#ffb8c4] hover:bg-[#fff8fa] hover:text-[#ff2442]"
             >
+              <BookmarkLineIcon className="h-4 w-4 text-[#ff6b81]" />
               收藏夹
             </button>
             <button
               type="button"
               onClick={handleClearAuthors}
               disabled={loading || authors.length === 0}
-              className="rounded-[18px] border border-slate-200 bg-slate-50 px-3 py-2 text-sm font-medium text-slate-500 shadow-[0_1px_2px_rgba(15,23,42,0.04)] transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400"
+              className="flex items-center justify-center gap-2 rounded-[18px] border border-[#ffd6dd] bg-white px-3 py-2 text-sm font-medium text-slate-700 shadow-[0_2px_8px_rgba(255,36,66,0.05)] transition hover:border-[#ffb8c4] hover:bg-[#fff8fa] hover:text-[#ff2442] disabled:cursor-not-allowed disabled:border-slate-200 disabled:bg-slate-100 disabled:text-slate-400"
             >
+              <TrashLineIcon className="h-4 w-4 text-[#ff8ea0]" />
               清空入库博主
             </button>
           </div>
@@ -2760,69 +2854,59 @@ export function PopupApp() {
                   还没有手动创建的标签。你可以直接新建，也可以先去博主列表接受系统推荐标签。
                 </div>
               ) : (
-                <>
-                  <div className="grid grid-cols-3 gap-2">
-                    {tags.map((tag) => {
-                      const taggedCount = authors.filter((author) => author.tags.includes(tag.name)).length;
-
-                      return (
-                        <div
-                          key={tag.id}
-                          className={[
-                            'relative rounded-[20px] border px-2.5 py-2.5 transition',
-                            selectedTagId === tag.id
-                              ? 'border-red-200 bg-red-50'
-                              : 'border-slate-200 bg-white hover:border-slate-300',
-                          ].join(' ')}
-                        >
-                          <button
-                            type="button"
-                            onClick={() => handleDeleteTag(tag.id)}
-                            aria-label={`删除标签 ${tag.name}`}
-                            title={`删除标签 ${tag.name}`}
-                            className="absolute right-2 top-2 h-5 w-5 rounded-full bg-slate-100 text-[10px] leading-none text-slate-500 transition hover:bg-slate-200"
-                          >
-                            ×
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => setSelectedTagId(tag.id)}
-                            className="w-full text-left"
-                          >
-                            <div className="flex items-center gap-1.5 pr-5">
-                              <span className="text-base leading-none">{getTagDisplayIcon(tag.name)}</span>
-                              <p className="truncate text-sm font-medium text-slate-900">{tag.name}</p>
-                            </div>
-                            <p className="mt-2 text-xs text-slate-500">{taggedCount}</p>
-                          </button>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  {untaggedTagCount > 0 ? (
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    ...tags.map((tag) => ({
+                      id: tag.id,
+                      name: tag.name,
+                      taggedCount: authors.filter((author) => author.tags.includes(tag.name)).length,
+                      isUntagged: false,
+                    })),
+                    ...(untaggedTagCount > 0
+                      ? [{
+                          id: UNTAGGED_TAG_ID,
+                          name: UNTAGGED_TAG_NAME,
+                          taggedCount: untaggedTagCount,
+                          isUntagged: true,
+                        }]
+                      : []),
+                  ].map((tag) => (
                     <div
+                      key={tag.id}
                       className={[
-                        'mt-2 rounded-[20px] border px-3 py-3 transition',
-                        selectedTagId === UNTAGGED_TAG_ID
+                        'relative rounded-[20px] border px-2.5 py-2.5 transition',
+                        selectedTagId === tag.id
                           ? 'border-red-200 bg-red-50'
                           : 'border-slate-200 bg-white hover:border-slate-300',
                       ].join(' ')}
                     >
+                      {tag.isUntagged ? null : (
+                        <button
+                          type="button"
+                          onClick={() => handleDeleteTag(tag.id)}
+                          aria-label={`删除标签 ${tag.name}`}
+                          title={`删除标签 ${tag.name}`}
+                          className="absolute right-2 top-2 h-5 w-5 rounded-full bg-slate-100 text-[10px] leading-none text-slate-500 transition hover:bg-slate-200"
+                        >
+                          ×
+                        </button>
+                      )}
                       <button
                         type="button"
-                        onClick={() => setSelectedTagId(UNTAGGED_TAG_ID)}
+                        onClick={() => setSelectedTagId(tag.id)}
                         className="w-full text-left"
                       >
-                        <div className="flex items-center gap-2">
-                          <span className="text-base leading-none">{getTagDisplayIcon(UNTAGGED_TAG_NAME)}</span>
-                          <p className="text-sm font-medium text-slate-900">{UNTAGGED_TAG_NAME}</p>
+                        <div className="flex items-center gap-1.5 pr-5">
+                          <span className="text-base leading-none">{getTagDisplayIcon(tag.name)}</span>
+                          <p className="truncate text-sm font-medium text-slate-900">{tag.name}</p>
                         </div>
-                        <p className="mt-1 text-xs text-slate-500">{untaggedTagCount} 位博主未打标</p>
+                        <p className="mt-2 text-xs text-slate-500">
+                          {tag.isUntagged ? `${tag.taggedCount} 位博主未打标` : tag.taggedCount}
+                        </p>
                       </button>
                     </div>
-                  ) : null}
-                </>
+                  ))}
+                </div>
               )}
             </div>
 
